@@ -4216,9 +4216,11 @@ function lookupCode(code){
 }
 
 function addScanHistory(code,name){
+  // Only save found products (not 'Negasit')
+  if(!name||name==='Negasit')return;
   _scanHistory=_scanHistory.filter(h=>h.code!==code);
   _scanHistory.unshift({code,name,ts:new Date()});
-  if(_scanHistory.length>8) _scanHistory.pop();
+  if(_scanHistory.length>8)_scanHistory.pop();
 }
 
 function renderScanner(){
@@ -4246,11 +4248,17 @@ function renderScanner(){
   const ctrl=dv('scanner-controls');
   const camBtn=el('button','scanner-cam-btn');camBtn.id='scanner-cam-btn';camBtn.textContent='📷 Porneste camera';
 
+  // Dedicated scan trigger button — shown after camera starts
+  const scanTrigger=el('button','scanner-cam-btn');
+  scanTrigger.id='scan-trigger-btn';
+  scanTrigger.textContent='📷 Scaneaza';
+  scanTrigger.style.cssText='background:#f59e0b;border-color:#f59e0b;font-size:15px;height:44px;padding:0 22px;display:none';
+
   const manualWrap=dv('scanner-manual');
-  const inp=el('input','scanner-inp');inp.id='scanner-inp';inp.type='text';inp.placeholder='Cauta cod manual (ex: MES100090)...';inp.autocomplete='off';
+  const inp=el('input','scanner-inp');inp.id='scanner-inp';inp.type='text';inp.placeholder='Cauta cod manual (ex: BTF.RERNWE0079)...';inp.autocomplete='off';
   const searchBtn=el('button','scanner-search-btn');searchBtn.textContent='↵ Cauta';
   manualWrap.appendChild(inp);manualWrap.appendChild(searchBtn);
-  ctrl.appendChild(camBtn);ctrl.appendChild(manualWrap);
+  ctrl.appendChild(camBtn);ctrl.appendChild(scanTrigger);ctrl.appendChild(manualWrap);
   bottom.appendChild(ctrl);
 
   // Result area
@@ -4271,6 +4279,7 @@ function renderScanner(){
   camBtn.addEventListener('click',async()=>{
     if(_scannerActive){
       stopScanner();camBtn.textContent='📷 Porneste camera';camBtn.className='scanner-cam-btn';
+      scanTrigger.style.display='none';
       video.srcObject=null;return;
     }
     camBtn.disabled=true;camBtn.textContent='Se initializeaza...';
@@ -4281,7 +4290,9 @@ function renderScanner(){
       video.srcObject=_scannerStream;
       await video.play();
       _scannerActive=true;
-      camBtn.disabled=false;camBtn.textContent='⏹ Opreste camera';camBtn.className='scanner-cam-btn stop';
+      camBtn.disabled=false;camBtn.textContent='⏹ Opreste';camBtn.className='scanner-cam-btn stop';
+      scanTrigger.style.display='';  // show scan button
+      overlay.querySelector('.scanner-hint').textContent='Apasa butonul galben pentru a scana';
       startBarcodeDetection(video,resultArea,histWrap,camBtn);
     }catch(e){
       camBtn.disabled=false;camBtn.textContent='📷 Porneste camera';camBtn.className='scanner-cam-btn';
@@ -4318,61 +4329,86 @@ function loadScript(src){
   });
 }
 
+/* Scan on demand: collect votes for VOTE_WINDOW ms, pick most-frequent valid code */
+let _scanPending=false;
+let _scanVotes={};
+const VOTE_WINDOW=900;
+const MIN_VOTES=2;
+
+function cleanBarcode(raw){
+  return raw.replace(/[^\x20-\x7E]/g,'').trim().toUpperCase();
+}
+
+function commitVote(resultArea,histWrap){
+  const entries=Object.entries(_scanVotes).sort((a,b)=>b[1]-a[1]);
+  _scanVotes={};_scanPending=false;
+  const scanBtn=document.getElementById('scan-trigger-btn');
+  if(scanBtn){scanBtn.disabled=false;scanBtn.textContent='📷 Scaneaza';}
+  if(!entries.length){
+    const w=dv('');w.style.cssText='padding:10px 16px;background:#fef9c3;border:1px solid #fde047;color:#92400e;font-size:12px;border-radius:4px;margin:8px 16px';
+    w.textContent='Niciun cod detectat. Asigura-te ca telefonul e stabil si codul e bine iluminat.';
+    resultArea.innerHTML='';resultArea.appendChild(w);return;
+  }
+  const [code,votes]=entries[0];
+  if(votes<MIN_VOTES){
+    const w=dv('');w.style.cssText='padding:10px 16px;background:#fef9c3;border:1px solid #fde047;color:#92400e;font-size:12px;border-radius:4px;margin:8px 16px';
+    w.textContent='Cod incert: "'+code+'" ('+votes+'/'+MIN_VOTES+' citiri). Incearca din nou cu telefonul mai stabil.';
+    resultArea.innerHTML='';resultArea.appendChild(w);return;
+  }
+  showScanResult(code,resultArea,histWrap);
+}
+
 async function startBarcodeDetection(video,resultArea,histWrap,camBtn){
-  let lastCode='';let lastTs=0;
-  const COOLDOWN=3000;
-  const onDetect=(code)=>{
-    code=String(code).trim();
-    if(!code||(code===lastCode&&Date.now()-lastTs<COOLDOWN))return;
-    lastCode=code;lastTs=Date.now();
-    flashSuccess(video);
-    showScanResult(code,resultArea,histWrap);
+  const scanBtn=document.getElementById('scan-trigger-btn');
+  const addVote=(raw)=>{
+    if(!_scanPending)return;
+    const code=cleanBarcode(raw);
+    if(!code||code.length<4)return;
+    _scanVotes[code]=(_scanVotes[code]||0)+1;
   };
+  const doScan=()=>{
+    if(!_scannerActive||_scanPending)return;
+    _scanPending=true;_scanVotes={};
+    if(scanBtn){scanBtn.disabled=true;scanBtn.textContent='⏳ Se citeste...';}
+    flashSuccess(video);
+    setTimeout(()=>commitVote(resultArea,histWrap),VOTE_WINDOW);
+  };
+  if(scanBtn)scanBtn.addEventListener('click',doScan);
   // Method 1: Native BarcodeDetector (Chrome Android)
   if('BarcodeDetector' in window){
-    let formats=['code_128','code_39','ean_13','ean_8','qr_code','data_matrix','upc_a','upc_e','itf','codabar'];
+    let formats=['code_128','code_39','ean_13','ean_8','qr_code','data_matrix','upc_a','upc_e','itf'];
     try{const sup=await BarcodeDetector.getSupportedFormats();formats=formats.filter(f=>sup.includes(f));}catch(_){}
     const detector=new BarcodeDetector({formats});
     const tick=async()=>{
       if(!_scannerActive)return;
-      try{const codes=await detector.detect(video);for(const bc of codes)onDetect(bc.rawValue);}catch(_){}
-      if(_scannerActive)requestAnimationFrame(tick);
+      if(_scanPending){try{const codes=await detector.detect(video);for(const bc of codes)addVote(bc.rawValue);}catch(_){}}
+      if(_scannerActive)setTimeout(()=>requestAnimationFrame(tick),50);
     };
-    requestAnimationFrame(tick);
-    return;
+    requestAnimationFrame(tick);return;
   }
   // Method 2: QuaggaJS (iOS Safari, Firefox)
   try{await loadScript('https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js');}
-  catch(e){
-    const msg=dv('');msg.style.cssText='padding:8px 16px;background:#fef9c3;color:#92400e;font-size:11px;border-bottom:1px solid #fde047';
-    msg.textContent='Nu s-a putut incarca modulul de scanare. Foloseste cautarea manuala.';
-    resultArea.before(msg);return;
-  }
+  catch(e){const msg=dv('');msg.style.cssText='padding:8px 16px;background:#fef9c3;color:#92400e;font-size:11px;border-bottom:1px solid #fde047';msg.textContent='Nu s-a putut incarca modulul. Foloseste cautarea manuala.';resultArea.before(msg);return;}
   let qDiv=document.getElementById('quagga-container');
   if(!qDiv){qDiv=document.createElement('div');qDiv.id='quagga-container';qDiv.style.cssText='position:fixed;top:-9999px;left:-9999px;width:320px;height:240px';document.body.appendChild(qDiv);}
   Quagga.init({
-    inputStream:{name:'Live',type:'LiveStream',target:qDiv,
-      constraints:{facingMode:'environment',width:{min:640},height:{min:480}}},
-    locator:{patchSize:'medium',halfSample:true},
-    numOfWorkers:1,frequency:10,
-    decoder:{readers:['code_128_reader','code_39_reader','ean_reader','ean_8_reader','upc_reader','upc_e_reader','i2of5_reader','codabar_reader']},
+    inputStream:{name:'Live',type:'LiveStream',target:qDiv,constraints:{facingMode:'environment',width:{min:640},height:{min:480}}},
+    locator:{patchSize:'large',halfSample:false},numOfWorkers:1,frequency:20,
+    decoder:{readers:['code_128_reader','code_39_reader','ean_reader','ean_8_reader'],multiple:false},
     locate:true,
   },(err)=>{
-    if(err){
-      const msg=dv('');msg.style.cssText='padding:8px 16px;background:#fee2e2;color:#dc2626;font-size:11px;border-bottom:1px solid #fca5a5';
-      msg.textContent='Scanare automata indisponibila: '+String(err).substring(0,80)+'. Foloseste cautarea manuala.';
-      resultArea.before(msg);return;
-    }
-    Quagga.start();
-    _scannerReader={reset:()=>{try{Quagga.stop();}catch(_){}}};
+    if(err){const msg=dv('');msg.style.cssText='padding:8px 16px;background:#fee2e2;color:#dc2626;font-size:11px';msg.textContent='Scanare auto indisponibila. Foloseste cautarea manuala.';resultArea.before(msg);return;}
+    Quagga.start();_scannerReader={reset:()=>{try{Quagga.stop();}catch(_){}}};
   });
-  Quagga.onDetected((result)=>{if(!_scannerActive)return;const code=result?.codeResult?.code;if(code)onDetect(code);});
+  Quagga.onDetected((result)=>{
+    if(!_scannerActive)return;
+    const code=result?.codeResult?.code;
+    const errors=(result?.codeResult?.decodedCodes||[]).filter(d=>d.error!==undefined).map(d=>d.error);
+    const avgErr=errors.length?errors.reduce((s,e)=>s+e,0)/errors.length:1;
+    if(avgErr>0.22)return;  // skip low-confidence reads
+    if(code)addVote(code);
+  });
 }
-function flashSuccess(video){
-  video.style.filter='brightness(1.4)';
-  setTimeout(()=>{video.style.filter='';},150);
-}
-
 function showScanResult(rawCode,resultArea,histWrap){
   const code=rawCode.trim();
   const result=lookupCode(code);
@@ -4390,7 +4426,7 @@ function showScanResult(rawCode,resultArea,histWrap){
       tip.textContent='Verifica daca fisierele BOM si Planning Overview sunt incarcate.';nf.appendChild(tip);
     }
     resultArea.appendChild(nf);
-    addScanHistory(code,'Negasit');
+    // Not added to history — only found products are saved
   } else {
     addScanHistory(result.code, result.name);
     const wrap=dv('scanner-result');
