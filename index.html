@@ -7,6 +7,7 @@
 <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/css/bootstrap.min.css" rel="stylesheet"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.3.3/js/bootstrap.bundle.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -539,6 +540,52 @@ button { font-family: var(--sans); }
 .plan-eff-lbl{font-size:11px;color:var(--text3);white-space:nowrap}
 .plan-eff-inp{width:52px;height:25px;border:1px solid var(--border);border-radius:3px;padding:0 6px;font-size:13px;font-weight:600;color:#d97706;text-align:right;outline:none;background:#fff}
 .rep-page{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
+/* ── SCANNER MODULE ── */
+.scanner-page{flex:1;display:flex;flex-direction:column;overflow:hidden;background:#0f1624}
+.scanner-top{flex-shrink:0;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;height:45vw;max-height:320px;min-height:200px}
+.scanner-video{width:100%;height:100%;object-fit:cover;display:block}
+.scanner-overlay{position:absolute;inset:0;pointer-events:none}
+.scanner-frame{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:min(280px,75vw);height:min(160px,42vw);border:2px solid rgba(255,255,255,.15);border-radius:8px}
+.scanner-corner{position:absolute;width:24px;height:24px;border-color:#f59e0b;border-style:solid}
+.scanner-corner.tl{top:-2px;left:-2px;border-width:3px 0 0 3px;border-radius:4px 0 0 0}
+.scanner-corner.tr{top:-2px;right:-2px;border-width:3px 3px 0 0;border-radius:0 4px 0 0}
+.scanner-corner.bl{bottom:-2px;left:-2px;border-width:0 0 3px 3px;border-radius:0 0 0 4px}
+.scanner-corner.br{bottom:-2px;right:-2px;border-width:0 3px 3px 0;border-radius:0 0 4px 0}
+.scanner-line{position:absolute;left:10%;right:10%;height:2px;background:linear-gradient(90deg,transparent,#f59e0b,transparent);animation:scanLine 2s linear infinite}
+@keyframes scanLine{0%{top:10%}100%{top:88%}}
+.scanner-hint{position:absolute;bottom:10px;left:50%;transform:translateX(-50%);font-size:11px;color:rgba(255,255,255,.5);white-space:nowrap}
+.scanner-bottom{background:#fff;flex:1;overflow-y:auto}
+.scanner-controls{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.scanner-cam-btn{height:34px;padding:0 14px;border:1.5px solid var(--accent);border-radius:5px;background:var(--accent);color:#fff;font-size:12px;font-weight:600;cursor:pointer;white-space:nowrap}
+.scanner-cam-btn.stop{background:#dc2626;border-color:#dc2626}
+.scanner-manual{display:flex;gap:6px;flex:1;min-width:200px}
+.scanner-inp{flex:1;height:34px;border:1.5px solid var(--border);border-radius:5px;padding:0 10px;font-size:13px;font-family:Arial,monospace;outline:none;transition:border .15s}
+.scanner-inp:focus{border-color:var(--accent)}
+.scanner-search-btn{height:34px;padding:0 12px;border:1.5px solid var(--accent);border-radius:5px;background:var(--accent-bg);color:var(--accent);font-size:12px;font-weight:600;cursor:pointer}
+.scanner-result{padding:14px 16px}
+.scan-product-code{font-size:18px;font-weight:800;font-family:Arial,monospace;color:var(--text);margin-bottom:2px}
+.scan-product-name{font-size:12px;color:var(--text3);margin-bottom:12px}
+.scan-stock-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:8px;margin-bottom:14px}
+.scan-stock-card{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:10px;text-align:center}
+.scan-stock-label{font-size:9px;font-weight:700;color:var(--text3);letter-spacing:.07em;text-transform:uppercase;margin-bottom:4px}
+.scan-stock-val{font-size:22px;font-weight:900;font-family:Arial,monospace}
+.scan-stock-val.pos{color:#15803d}
+.scan-stock-val.zero{color:var(--text4)}
+.scan-stock-val.neg{color:#dc2626}
+.scan-wip-wcs{font-size:10px;color:var(--text3);margin-top:3px;line-height:1.5}
+.scan-actions{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+.scan-action-btn{height:30px;padding:0 12px;border:1.5px solid var(--border);border-radius:4px;background:#fff;font-size:11px;cursor:pointer;color:var(--text2);transition:all .15s;font-weight:500}
+.scan-action-btn:hover{border-color:var(--accent);color:var(--accent);background:var(--accent-bg)}
+.scan-history{border-top:1px solid var(--border2);padding:10px 16px}
+.scan-hist-title{font-size:9.5px;font-weight:700;color:var(--text3);letter-spacing:.08em;text-transform:uppercase;margin-bottom:6px}
+.scan-hist-item{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border2);cursor:pointer}
+.scan-hist-item:hover .scan-hist-code{color:var(--accent)}
+.scan-hist-code{font-family:Arial,monospace;font-size:12px;font-weight:700;color:var(--text);width:130px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.scan-hist-name{font-size:11px;color:var(--text3);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.scan-hist-time{font-size:10px;color:var(--text4);flex-shrink:0}
+.scan-not-found{padding:24px 16px;text-align:center}
+.scan-beep{animation:scanBeep .15s ease}
+@keyframes scanBeep{0%,100%{background:#fff}50%{background:#fef9c3}}
 /* ── WC Loading report ── */
 .wc-load-page{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
 .wc-load-toolbar{display:flex;align-items:center;gap:8px;padding:9px 14px;background:#fff;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap;font-size:12px;color:var(--text3)}
@@ -2006,6 +2053,7 @@ function render(){
     {id:'orderbook',label:'Order Book'},
     {id:'rapoarte',label:'Rapoarte'},
     {id:'planificare',label:'Planificare'},
+    {id:'scanner',label:'📷 Scanner'},
   ];
   if(S.session.role==='admin') tabs.push({id:'utilizatori',label:'Utilizatori'});
 
@@ -2067,6 +2115,7 @@ function render(){
   else if(S.tab==='orderbook')body.appendChild(renderOrderBook());
   else if(S.tab==='rapoarte') body.appendChild(renderRapoarte());
   else if(S.tab==='planificare')body.appendChild(renderPlanificare());
+  else if(S.tab==='scanner')body.appendChild(renderScanner());
   else if(S.tab==='utilizatori'&&S.session.role==='admin')body.appendChild(renderUsersTab());
   else{const c=dv('cnt');c.style.flex='1';c.appendChild(mkEmpty('Modul in constructie',''));body.appendChild(c);}
 
@@ -4089,6 +4138,317 @@ function exportWcLoad(wcData){
   ws['!cols']=[{wch:28},{wch:14},{wch:12},{wch:12},{wch:18},{wch:18}];
   XLSX.utils.book_append_sheet(wb,ws,'Incarcare WC');
   XLSX.writeFile(wb,`Incarcare_WC_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SCANNER MODULE — Barcode / QR scanning via camera
+   Uses native BarcodeDetector API (Chrome/Android) with
+   ZXing library as fallback for iOS Safari
+═══════════════════════════════════════════════════════════════ */
+let _scannerActive=false;
+let _scannerStream=null;
+let _scannerReader=null;
+let _scanHistory=[];  // [{code, name, ts}]
+
+function stopScanner(){
+  _scannerActive=false;
+  if(_scannerReader){try{_scannerReader.reset();}catch(_){}_scannerReader=null;}
+  if(_scannerStream){_scannerStream.getTracks().forEach(t=>t.stop());_scannerStream=null;}
+}
+
+function lookupCode(code){
+  code=code.trim().toUpperCase();
+  if(!code) return null;
+  // Search in stockIdx (material codes)
+  if(S.stockIdx?.has(code)){
+    const st=S.stockIdx.get(code);
+    return{type:'material',code,name:st.name||'—',stock:st,fps:[...(st.fps||[])]};
+  }
+  // Search as FP code
+  const fp=S.fps?.find(f=>f.code===code||f.code.toUpperCase()===code);
+  if(fp){
+    const st=S.stockIdx?.get(code)||{onHand:0,onMO:0,totalWIP:0,wipByWC:{}};
+    return{type:'fp',code:fp.code,name:fp.drawing||fp.name||'—',stock:st,fps:[fp.code]};
+  }
+  // Fuzzy: partial match
+  if(S.stockIdx){
+    for(const[k,v] of S.stockIdx){
+      if(k.includes(code)||code.includes(k)){
+        return{type:'material',code:k,name:v.name||'—',stock:v,fps:[...(v.fps||[])]};
+      }
+    }
+  }
+  return null;
+}
+
+function addScanHistory(code,name){
+  _scanHistory=_scanHistory.filter(h=>h.code!==code);
+  _scanHistory.unshift({code,name,ts:new Date()});
+  if(_scanHistory.length>8) _scanHistory.pop();
+}
+
+function renderScanner(){
+  const page=dv('scanner-page');
+
+  // ── Camera viewport ──
+  const top=dv('scanner-top');
+  const video=el('video','scanner-video');
+  video.id='scanner-video';video.setAttribute('playsinline','');video.setAttribute('muted','');video.muted=true;video.autoplay=true;
+  top.appendChild(video);
+
+  const overlay=dv('scanner-overlay');
+  const frame=dv('scanner-frame');
+  ['tl','tr','bl','br'].forEach(c=>{const corner=dv(`scanner-corner ${c}`);frame.appendChild(corner);});
+  frame.appendChild(dv('scanner-line'));
+  overlay.appendChild(frame);
+  overlay.appendChild(sp('scanner-hint','Aliniaza codul de bare in cadru'));
+  top.appendChild(overlay);
+  page.appendChild(top);
+
+  // ── Bottom panel ──
+  const bottom=dv('scanner-bottom');
+
+  // Controls bar
+  const ctrl=dv('scanner-controls');
+  const camBtn=el('button','scanner-cam-btn');camBtn.id='scanner-cam-btn';camBtn.textContent='📷 Porneste camera';
+
+  const manualWrap=dv('scanner-manual');
+  const inp=el('input','scanner-inp');inp.id='scanner-inp';inp.type='text';inp.placeholder='Cauta cod manual (ex: MES100090)...';inp.autocomplete='off';
+  const searchBtn=el('button','scanner-search-btn');searchBtn.textContent='↵ Cauta';
+  manualWrap.appendChild(inp);manualWrap.appendChild(searchBtn);
+  ctrl.appendChild(camBtn);ctrl.appendChild(manualWrap);
+  bottom.appendChild(ctrl);
+
+  // Result area
+  const resultArea=dv('');resultArea.id='scanner-result-area';
+  const emptyMsg=dv('');emptyMsg.style.cssText='padding:24px;text-align:center;color:var(--text3);font-size:12px';
+  emptyMsg.innerHTML='<div style="font-size:28px;margin-bottom:8px">📷</div>Porneste camera sau introdu un cod manual';
+  resultArea.appendChild(emptyMsg);
+  bottom.appendChild(resultArea);
+
+  // History
+  const histWrap=dv('scan-history');histWrap.id='scan-history';
+  bottom.appendChild(histWrap);
+  renderScanHistory(histWrap,resultArea);
+
+  page.appendChild(bottom);
+
+  // ── Camera start/stop ──
+  camBtn.addEventListener('click',async()=>{
+    if(_scannerActive){
+      stopScanner();camBtn.textContent='📷 Porneste camera';camBtn.className='scanner-cam-btn';
+      video.srcObject=null;return;
+    }
+    camBtn.disabled=true;camBtn.textContent='Se initializeaza...';
+    try{
+      _scannerStream=await navigator.mediaDevices.getUserMedia({
+        video:{facingMode:{ideal:'environment'},width:{ideal:1280},height:{ideal:720}}
+      });
+      video.srcObject=_scannerStream;
+      await video.play();
+      _scannerActive=true;
+      camBtn.disabled=false;camBtn.textContent='⏹ Opreste camera';camBtn.className='scanner-cam-btn stop';
+      startBarcodeDetection(video,resultArea,histWrap,camBtn);
+    }catch(e){
+      camBtn.disabled=false;camBtn.textContent='📷 Porneste camera';camBtn.className='scanner-cam-btn';
+      const errMsg=dv('');errMsg.style.cssText='padding:12px 16px;background:#fee2e2;color:#dc2626;font-size:12px;border-bottom:1px solid #fca5a5';
+      errMsg.textContent=e.name==='NotAllowedError'?'Camera blocata — permite accesul la camera in setarile browserului.':'Camera indisponibila: '+e.message;
+      bottom.insertBefore(errMsg,resultArea);setTimeout(()=>errMsg.remove(),4000);
+    }
+  });
+
+  // Manual search
+  const doSearch=()=>{
+    const code=inp.value.trim();if(!code)return;
+    showScanResult(code,resultArea,histWrap);inp.select();
+  };
+  searchBtn.addEventListener('click',doSearch);
+  inp.addEventListener('keydown',e=>{if(e.key==='Enter')doSearch();});
+
+  // Stop camera when leaving tab
+  const obs=new MutationObserver(()=>{if(!document.contains(page)){stopScanner();obs.disconnect();}});
+  obs.observe(document.body,{childList:true,subtree:false});
+
+  return page;
+}
+
+function startBarcodeDetection(video,resultArea,histWrap,camBtn){
+  // Try native BarcodeDetector first (Chrome, Android WebView)
+  if('BarcodeDetector' in window){
+    const detector=new BarcodeDetector({formats:['code_128','code_39','ean_13','ean_8','qr_code','data_matrix','upc_a','upc_e','itf','codabar']});
+    let lastCode='';let lastTs=0;
+    const scan=async()=>{
+      if(!_scannerActive)return;
+      try{
+        const codes=await detector.detect(video);
+        for(const bc of codes){
+          const code=bc.rawValue;
+          if(code&&(code!==lastCode||Date.now()-lastTs>3000)){
+            lastCode=code;lastTs=Date.now();
+            showScanResult(code,resultArea,histWrap);
+            flashSuccess(video);
+          }
+        }
+      }catch(_){}
+      if(_scannerActive)requestAnimationFrame(scan);
+    };
+    requestAnimationFrame(scan);
+  } else if(window.ZXing){
+    // ZXing fallback (iOS Safari, Firefox)
+    try{
+      const hints=new Map();
+      const formats=[
+        ZXing.BarcodeFormat.CODE_128,ZXing.BarcodeFormat.CODE_39,
+        ZXing.BarcodeFormat.EAN_13,ZXing.BarcodeFormat.EAN_8,
+        ZXing.BarcodeFormat.QR_CODE,ZXing.BarcodeFormat.DATA_MATRIX,
+      ];
+      hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,formats);
+      _scannerReader=new ZXing.BrowserMultiFormatReader(hints,500);
+      _scannerReader.decodeFromVideoElement(video,(result,err)=>{
+        if(result&&_scannerActive){
+          const code=result.getText();
+          showScanResult(code,resultArea,histWrap);
+          flashSuccess(video);
+        }
+      });
+    }catch(e){console.warn('ZXing error:',e);}
+  } else {
+    // No barcode library available
+    const msg=dv('');msg.style.cssText='padding:8px 16px;background:#fef9c3;color:#92400e;font-size:11px;border-bottom:1px solid #fde047';
+    msg.textContent='Scanarea automata nu e disponibila pe acest browser. Foloseste cautarea manuala.';
+    resultArea.before(msg);
+  }
+}
+
+function flashSuccess(video){
+  video.style.filter='brightness(1.4)';
+  setTimeout(()=>{video.style.filter='';},150);
+}
+
+function showScanResult(rawCode,resultArea,histWrap){
+  const code=rawCode.trim();
+  const result=lookupCode(code);
+  resultArea.innerHTML='';
+  resultArea.className='scanner-result scan-beep';
+  setTimeout(()=>resultArea.className='scanner-result',200);
+
+  if(!result){
+    const nf=dv('scan-not-found');
+    nf.appendChild(sp('scan-product-code',code));
+    const msg=dv('');msg.style.cssText='font-size:12px;color:#dc2626;margin-top:6px';msg.textContent='Codul nu a fost gasit in BOM/Stocuri.';
+    nf.appendChild(msg);
+    if(S.bomData){
+      const tip=dv('');tip.style.cssText='font-size:11px;color:var(--text3);margin-top:8px';
+      tip.textContent='Verifica daca fisierele BOM si Planning Overview sunt incarcate.';nf.appendChild(tip);
+    }
+    resultArea.appendChild(nf);
+    addScanHistory(code,'Negasit');
+  } else {
+    addScanHistory(result.code, result.name);
+    const wrap=dv('scanner-result');
+
+    // Header
+    wrap.appendChild(sp('scan-product-code',result.code));
+    wrap.appendChild(sp('scan-product-name',result.name));
+
+    // Type badge
+    const badges=dv('scan-badges');
+    if(result.type==='fp'){
+      const b=sp('stk-type-m','PRODUS FINIT');badges.appendChild(b);
+    } else {
+      const st=result.stock;
+      const typeCls=st.type==='M'?'stk-type-m':st.type==='P'?'stk-type-b':'stk-type-d';
+      const typeLabel=st.type==='M'?'MAKE':st.type==='P'?'BUY':'DIRECT';
+      badges.appendChild(sp(typeCls,typeLabel));
+    }
+    wrap.appendChild(badges);
+
+    // Stock cards
+    const st=result.stock;
+    const grid=dv('scan-stock-grid');
+
+    const mkCard=(label,val)=>{
+      const card=dv('scan-stock-card');
+      card.appendChild(sp('scan-stock-label',label));
+      const cls=val>0?'pos':val<0?'neg':'zero';
+      card.appendChild(sp(`scan-stock-val ${cls}`,fmtN(val)));
+      return card;
+    };
+    grid.appendChild(mkCard('On Hand',st.onHand||0));
+    grid.appendChild(mkCard('On MO',st.onMO||0));
+    grid.appendChild(mkCard('Total WIP',st.totalWIP||0));
+
+    // Available (On Hand + WIP, min 0)
+    const avail=Math.max(0,st.onHand||0)+Math.max(0,st.totalWIP||0);
+    const availCard=mkCard('Disponibil',avail);
+    availCard.style.borderColor=avail>0?'#86efac':'#e5e7eb';
+    grid.appendChild(availCard);
+    wrap.appendChild(grid);
+
+    // WIP by WC
+    if(st.totalWIP>0&&Object.keys(st.wipByWC||{}).length>0){
+      const wcs=dv('scan-wip-wcs');
+      wcs.textContent='WIP: '+Object.entries(st.wipByWC).map(([wc,q])=>`${wcLabel(wc)}: ${fmtN(q)}`).join(' · ');
+      wrap.appendChild(wcs);
+    }
+
+    // Plan info
+    const planQ=planQty(result.code);
+    if(planQ>0){
+      const pi=dv('');pi.style.cssText='background:#fef9c3;border:1px solid #fde047;border-radius:4px;padding:7px 10px;font-size:11.5px;color:#92400e;margin-bottom:12px';
+      pi.textContent=`📋 In planul de productie: ${planQ.toLocaleString('ro-RO')} buc`;
+      wrap.appendChild(pi);
+    }
+
+    // FP associations
+    if(result.fps?.length>0&&result.type!=='fp'){
+      const fpWrap=dv('');fpWrap.style.cssText='margin-bottom:12px';
+      fpWrap.appendChild(sp('scan-hist-title','Apare in produse finale:'));
+      const pills=dv('');pills.style.cssText='display:flex;flex-wrap:wrap;gap:4px;margin-top:4px';
+      result.fps.slice(0,6).forEach(fp=>{
+        const pill=sp('stk-fp-pill',fp);pill.style.cursor='pointer';
+        pill.addEventListener('click',()=>{S.selFP=fp;S.tab='structura';stopScanner();render();});
+        pills.appendChild(pill);
+      });
+      if(result.fps.length>6)pills.appendChild(sp('stk-fp-more',`+${result.fps.length-6}`));
+      fpWrap.appendChild(pills);wrap.appendChild(fpWrap);
+    }
+
+    // Action buttons
+    const actions=dv('scan-actions');
+    if(S.bomData){
+      const fpCode=result.type==='fp'?result.code:result.fps?.[0];
+      if(fpCode){
+        const structBtn=el('button','scan-action-btn');structBtn.textContent='🌳 Structura BOM';
+        structBtn.addEventListener('click',()=>{S.selFP=fpCode;S.tab='structura';stopScanner();render();});
+        actions.appendChild(structBtn);
+      }
+    }
+    if(S.stockIdx){
+      const stocBtn=el('button','scan-action-btn');stocBtn.textContent='📦 Vezi in Stocuri';
+      stocBtn.addEventListener('click',()=>{S.tab='stocuri';S.stockFilter.q=result.code;stopScanner();render();});
+      actions.appendChild(stocBtn);
+    }
+    wrap.appendChild(actions);
+    resultArea.appendChild(wrap);
+  }
+  renderScanHistory(histWrap,resultArea);
+}
+
+function renderScanHistory(histWrap,resultArea){
+  histWrap.innerHTML='';
+  if(!_scanHistory.length)return;
+  histWrap.appendChild(sp('scan-hist-title','Scanari recente'));
+  _scanHistory.forEach(h=>{
+    const item=dv('scan-hist-item');
+    item.appendChild(sp('scan-hist-code',h.code));
+    item.appendChild(sp('scan-hist-name',h.name));
+    const now=new Date();const diff=Math.round((now-h.ts)/1000);
+    const timeStr=diff<60?`${diff}s`:`${Math.round(diff/60)}min`;
+    item.appendChild(sp('scan-hist-time',timeStr+' ago'));
+    item.addEventListener('click',()=>showScanResult(h.code,resultArea,histWrap));
+    histWrap.appendChild(item);
+  });
 }
 
 function mkEmpty(h,p,showLeg){
