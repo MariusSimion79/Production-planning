@@ -744,14 +744,14 @@ const DB_NAME='PPS_store', STORE='files';
 
 // Pre-computed SHA-256 of 'Productie2026' — initial admin password
 const INITIAL_ADMIN_HASH='c99536fe626c213364d8b35b4ad7501600d3d65bcd32cf2cb958c3a897c3f48f';
-const GH_CFG_KEY='pps_gh_cfg';
-const GH_SESSION_KEY='pps_session';
+const SB_CFG_KEY='pps_gh_cfg';
+const SB_SESSION_KEY='pps_session';
 
 const S={
   // ── Auth ──
-  session:null,   // {username, role:'admin'|'user'}
-  ghCfg:null,     // {token, owner, repo} — persisted in localStorage
-  authScreen:'login', // 'login'|'setup'
+  session:null,
+  sbCfg:null,     // {url, key, bucket} — persisted in localStorage
+  authScreen:'login',
 
   // ── App state ──
   tab:'structura',
@@ -841,12 +841,14 @@ function ghFilterRows(key,rows){
   return rows.map(r=>{const o={};for(const c of cols){if(r[c]!==undefined&&r[c]!==null&&r[c]!=='')o[c]=r[c];}return o;});
 }
 
-/* ── GitHub config + session helpers ── */
-function loadGhCfg(){try{const c=localStorage.getItem(GH_CFG_KEY);return c?JSON.parse(c):null;}catch{return null;}}
-function saveGhCfg(cfg){localStorage.setItem(GH_CFG_KEY,JSON.stringify(cfg));}
-function loadSession(){try{const s=sessionStorage.getItem(GH_SESSION_KEY);return s?JSON.parse(s):null;}catch{return null;}}
-function saveSession(sess){sessionStorage.setItem(GH_SESSION_KEY,JSON.stringify(sess));}
-function clearSession(){sessionStorage.removeItem(GH_SESSION_KEY);}
+/* ── Config + session helpers ── */
+const SB_CFG_KEY='pps_sb_cfg';
+const SB_SESSION_KEY='pps_session';
+function loadSbCfg(){try{const c=localStorage.getItem(SB_CFG_KEY);return c?JSON.parse(c):null;}catch{return null;}}
+function saveSbCfg(cfg){localStorage.setItem(SB_CFG_KEY,JSON.stringify(cfg));}
+function loadSession(){try{const s=sessionStorage.getItem(SB_SESSION_KEY);return s?JSON.parse(s):null;}catch{return null;}}
+function saveSession(sess){sessionStorage.setItem(SB_SESSION_KEY,JSON.stringify(sess));}
+function clearSession(){sessionStorage.removeItem(SB_SESSION_KEY);}
 
 /* ── Crypto ── */
 async function sha256(text){
@@ -854,110 +856,111 @@ async function sha256(text){
   return Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
 }
 
-/* ── GitHub API ── */
-async function ghGet(cfg,path){
-  const url=`https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/${path}`;
-  const r=await fetch(url,{headers:{'Authorization':'token '+cfg.token,'Accept':'application/vnd.github.v3+json'}});
-  if(r.status===404)return null;
-  if(r.status===401)throw new Error('Token GitHub invalid sau expirat. Reconfigureaza conexiunea.');
-  if(r.status===403)throw new Error('Token GitHub fara permisiuni "repo". Genereaza un token nou cu scope complet "repo".');
-  if(!r.ok)throw new Error(`GitHub ${path}: ${r.status} — verifica owner/repo/token.`);
-  const j=await r.json();
-  let content;
-  if(j.content&&j.content.trim()){
-    content=JSON.parse(atob(j.content.replace(/\s/g,'')));
-  } else {
-    const rawUrl=`https://raw.githubusercontent.com/${cfg.owner}/${cfg.repo}/main/${path}`;
-    const dr=await fetch(rawUrl,{headers:{'Authorization':'token '+cfg.token}});
-    if(!dr.ok)throw new Error(`GitHub raw ${path}: ${dr.status}`);
-    content=await dr.json();
-  }
-  return{content,sha:j.sha};
+/* ═══════════════════════════════════════════════════════════════
+   SUPABASE STORAGE SYNC
+   • cfg = {url, key, bucket}
+   • All files stored as JSON in the bucket
+   • Large files (BOM/BOW) stored gzip-compressed as text
+   • CORS works natively — no server needed
+═══════════════════════════════════════════════════════════════ */
+
+function sbHeaders(cfg){
+  return{'Authorization':'Bearer '+cfg.key,'apikey':cfg.key,'Content-Type':'application/json'};
 }
 
-async function ghTestConnection(cfg){
-  const url=`https://api.github.com/repos/${cfg.owner}/${cfg.repo}`;
-  const r=await fetch(url,{headers:{'Authorization':'token '+cfg.token,'Accept':'application/vnd.github.v3+json'}});
-  if(r.status===401)throw new Error('Token invalid sau expirat — genereaza un token nou.');
-  if(r.status===403)throw new Error('Acces interzis — token-ul trebuie sa aiba scope "repo" (nu doar public_repo).');
-  if(r.status===404)throw new Error('Repository negasit — verifica: 1) owner-ul este username-ul tau GitHub exact, 2) repo-ul privat exista, 3) token-ul are scope "repo".');
-  if(!r.ok)throw new Error(`Eroare GitHub: ${r.status}`);
-  const j=await r.json();
-  if(!j.private)throw new Error(`Repository-ul "${cfg.repo}" este PUBLIC. Datele trebuie stocate intr-un repository PRIVAT.`);
-  return j;
-}
-
-async function ghPut(cfg,path,content,sha){
-  const json=JSON.stringify(content);
-  const b64=btoa(unescape(encodeURIComponent(json)));
-  const body={message:`Update ${path}`,content:b64};
-  if(sha)body.sha=sha;
-  const r=await fetch(`https://api.github.com/repos/${cfg.owner}/${cfg.repo}/contents/${path}`,{
-    method:'PUT',
-    headers:{'Authorization':'token '+cfg.token,'Accept':'application/vnd.github.v3+json','Content-Type':'application/json'},
-    body:JSON.stringify(body)
+async function sbUpload(cfg,path,data){
+  const json=JSON.stringify(data);
+  const blob=new Blob([json],{type:'application/json'});
+  const url=`${cfg.url}/storage/v1/object/${cfg.bucket}/${path}`;
+  const r=await fetch(url,{
+    method:'POST',
+    headers:{'Authorization':'Bearer '+cfg.key,'apikey':cfg.key,'x-upsert':'true','Content-Type':'application/json'},
+    body:blob
   });
-  if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(`GitHub PUT ${path}: ${r.status} ${e.message||''}`);}
+  if(!r.ok){const e=await r.json().catch(()=>({}));throw new Error(`Supabase upload ${path}: ${r.status} ${e.error||e.message||''}`);}
+  return true;
+}
+
+async function sbDownload(cfg,path){
+  const url=`${cfg.url}/storage/v1/object/${cfg.bucket}/${path}`;
+  const r=await fetch(url,{headers:{'Authorization':'Bearer '+cfg.key,'apikey':cfg.key}});
+  if(r.status===404||r.status===400)return null;
+  if(!r.ok)throw new Error(`Supabase download ${path}: ${r.status}`);
   return await r.json();
 }
 
-/* ── User management ── */
-async function ghGetUsers(){
-  const cfg=S.ghCfg;if(!cfg)return{users:[],sha:null};
-  const res=await ghGet(cfg,'users.json');
-  if(!res){
-    const init=[{username:'MariusS',passwordHash:INITIAL_ADMIN_HASH,role:'admin',createdAt:new Date().toISOString()}];
-    await ghPut(cfg,'users.json',init,null);
-    return{users:init,sha:null};
+async function sbTestConnection(cfg){
+  // Try to list objects in bucket — confirms URL + key + bucket all work
+  const url=`${cfg.url}/storage/v1/object/list/${cfg.bucket}`;
+  const r=await fetch(url,{
+    method:'POST',
+    headers:{'Authorization':'Bearer '+cfg.key,'apikey':cfg.key,'Content-Type':'application/json'},
+    body:JSON.stringify({limit:1,offset:0,prefix:''})
+  });
+  if(r.status===400){const e=await r.json().catch(()=>({}));
+    if(e.error==='Bucket not found')throw new Error(`Bucket "${cfg.bucket}" inexistent — creeaza-l in Supabase Storage.`);
+    throw new Error(`Supabase: ${e.error||e.message||r.status}`);
   }
-  const users=Array.isArray(res.content)?res.content:[];
-  return{users,sha:res.sha};
+  if(r.status===401||r.status===403)throw new Error('Cheie API invalida. Verifica "anon public" key din Supabase → Settings → API.');
+  if(!r.ok)throw new Error(`Supabase test: ${r.status}`);
+  return true;
 }
 
-async function ghLogin(username,password){
-  const cfg=S.ghCfg;if(!cfg)throw new Error('GitHub neconfigurat');
+/* ── User management (stored as users.json in bucket) ── */
+async function sbGetUsers(){
+  const cfg=S.sbCfg;if(!cfg)return{users:[]};
+  const data=await sbDownload(cfg,'users.json');
+  if(!data){
+    const init=[{username:'admin',passwordHash:INITIAL_ADMIN_HASH,role:'admin',createdAt:new Date().toISOString()}];
+    await sbUpload(cfg,'users.json',init);
+    return{users:init};
+  }
+  return{users:Array.isArray(data)?data:[]};
+}
+
+async function sbLogin(username,password){
+  const cfg=S.sbCfg;if(!cfg)throw new Error('Supabase neconfigurat');
   const hash=await sha256(password);
-  const{users}=await ghGetUsers();
+  const{users}=await sbGetUsers();
   const user=users.find(u=>u.username===username&&u.passwordHash===hash);
   if(!user)throw new Error('Utilizator sau parola incorecta');
   return{username:user.username,role:user.role};
 }
 
-async function ghCreateUser(username,password,role){
+async function sbCreateUser(username,password,role){
   if(!S.session||S.session.role!=='admin')throw new Error('Acces interzis');
-  const{users,sha}=await ghGetUsers();
+  const{users}=await sbGetUsers();
   if(users.find(u=>u.username===username))throw new Error('Utilizatorul exista deja');
   users.push({username,passwordHash:await sha256(password),role:role||'user',createdAt:new Date().toISOString()});
-  await ghPut(S.ghCfg,'users.json',users,sha);
+  await sbUpload(S.sbCfg,'users.json',users);
   return users;
 }
 
-async function ghChangePassword(targetUser,newPassword){
+async function sbChangePassword(targetUser,newPassword){
   if(!S.session)throw new Error('Neautentificat');
   if(S.session.role!=='admin'&&S.session.username!==targetUser)throw new Error('Acces interzis');
-  const{users,sha}=await ghGetUsers();
+  const{users}=await sbGetUsers();
   const u=users.find(u=>u.username===targetUser);if(!u)throw new Error('User inexistent');
   u.passwordHash=await sha256(newPassword);
-  await ghPut(S.ghCfg,'users.json',users,sha);
+  await sbUpload(S.sbCfg,'users.json',users);
 }
 
-async function ghDeleteUser(targetUser){
+async function sbDeleteUser(targetUser){
   if(!S.session||S.session.role!=='admin')throw new Error('Acces interzis');
   if(targetUser===S.session.username)throw new Error('Nu poti sterge propriul cont');
-  const{users,sha}=await ghGetUsers();
-  await ghPut(S.ghCfg,'users.json',users.filter(u=>u.username!==targetUser),sha);
+  const{users}=await sbGetUsers();
+  await sbUpload(S.sbCfg,'users.json',users.filter(u=>u.username!==targetUser));
 }
 
 /* ── Data sync ── */
-async function ghSaveData(key,rows,ts){
-  const cfg=S.ghCfg;if(!cfg)return;
-  const filtered=ghFilterRows(key,rows);
-  const existing=await ghGet(cfg,`data-${key}.json`);
-  await ghPut(cfg,`data-${key}.json`,{rows:filtered,ts},existing?.sha||null);
+async function sbSaveData(key,rows,ts){
+  const cfg=S.sbCfg;if(!cfg)return;
+  const filtered=ghFilterRows(key,rows);  // reuse column filter
+  await sbUpload(cfg,`data-${key}.json`,{rows:filtered,ts});
 }
 
-async function ghLoadAllData(){
-  const cfg=S.ghCfg;if(!cfg)return false;
+async function sbLoadAllData(){
+  const cfg=S.sbCfg;if(!cfg)return false;
   let loaded=false;
   for(const{k,label,apply} of [
     {k:'bom',label:'BOM',apply:(r,t)=>applyBom(r,t)},
@@ -965,25 +968,22 @@ async function ghLoadAllData(){
     {k:'po', label:'Planning Overview',apply:(r,t)=>applyPo(r,t)},
     {k:'ob', label:'Order Book',apply:(r,t)=>applyOb(r,t)},
   ]){
-    S.loadMsg=`Se incarca ${label} din GitHub...`;setLoadMsg(S.loadMsg);await yieldFrame();
-    const res=await ghGet(cfg,`data-${k}.json`);
-    if(res?.content?.rows){apply(res.content.rows,res.content.ts);await dbSave(k,{rows:res.content.rows,ts:res.content.ts});loaded=true;}
+    S.loadMsg=`Se incarca ${label}...`;setLoadMsg(S.loadMsg);await yieldFrame();
+    const data=await sbDownload(cfg,`data-${k}.json`);
+    if(data?.rows){apply(data.rows,data.ts);await dbSave(k,{rows:data.rows,ts:data.ts});loaded=true;}
   }
-  // Load plan from GitHub
-  const planRes=await ghGet(cfg,'data-plan.json');
-  if(planRes?.content){
-    const p=planRes.content;
-    if(p.entries) S.planData=new Map(p.entries);
-    if(p.obs) S.planObs=p.obs;
-    if(p.wcAvailHours) S.wcAvailHours=p.wcAvailHours;
+  const planData=await sbDownload(cfg,'data-plan.json');
+  if(planData){
+    if(planData.entries)S.planData=new Map(planData.entries);
+    if(planData.obs)S.planObs=planData.obs;
+    if(planData.wcAvailHours)S.wcAvailHours=planData.wcAvailHours;
   }
   return loaded;
 }
 
-async function ghSavePlan(){
-  const cfg=S.ghCfg;if(!cfg)return;
-  const existing=await ghGet(cfg,'data-plan.json');
-  await ghPut(cfg,'data-plan.json',{entries:[...S.planData.entries()],obs:S.planObs,wcAvailHours:S.wcAvailHours},existing?.sha||null);
+async function sbSavePlan(){
+  const cfg=S.sbCfg;if(!cfg)return;
+  await sbUpload(cfg,'data-plan.json',{entries:[...S.planData.entries()],obs:S.planObs,wcAvailHours:S.wcAvailHours});
 }
 
 /* ── XLSX (only used on fresh upload, not on DB restore) ── */
@@ -1132,24 +1132,20 @@ function applyOb(rows,ts){
 
 /* ── AUTOLOAD ── */
 async function autoLoad(){
-  // Restore GitHub config and session
-  S.ghCfg=loadGhCfg();
+  S.sbCfg=loadSbCfg();
   S.session=loadSession();
 
   S.loading=true;S.loadMsg='Se incarca datele...';render();
   await yieldFrame();
   try{
-    if(S.ghCfg&&S.session){
-      // Logged in + GitHub configured → load from GitHub (fresh data)
-      S.loadMsg='Se sincronizeaza cu GitHub...';setLoadMsg(S.loadMsg);await yieldFrame();
-      await ghLoadAllData();
+    if(S.sbCfg&&S.session){
+      S.loadMsg='Se sincronizeaza cu Supabase...';setLoadMsg(S.loadMsg);await yieldFrame();
+      await sbLoadAllData();
     } else {
-      // Not logged in → load from local IndexedDB (offline fallback)
       await loadFromIndexedDB();
     }
   }catch(e){
     console.warn('Load error:',e);
-    // Fallback to IndexedDB on error
     try{await loadFromIndexedDB();}catch(_){}
   }
   S.loading=false;render();
@@ -1818,9 +1814,9 @@ function renderLogin(){
   const card=dv('auth-card');
   card.appendChild(dv('auth-logo',sp('auth-logo-mark','⬡'),dv('auth-logo-text','PRODUCTION\nPLANNING SUITE')));
   card.appendChild(sp('auth-title','Autentificare'));
-  const subTxt=S.ghCfg
-    ?`Repository date: ${S.ghCfg.owner}/${S.ghCfg.repo}`
-    :'GitHub neconfigurat';
+  const subTxt=S.sbCfg
+    ?`Baza de date: ${S.sbCfg.url.replace('https://','').split('.')[0]}...supabase.co`
+    :'Supabase neconfigurat';
   card.appendChild(sp('auth-sub',subTxt));
 
   const{field:uf,input:ui}=mkAuthField('Utilizator','text','username');card.appendChild(uf);
@@ -1831,22 +1827,22 @@ function renderLogin(){
   btn.addEventListener('click',async()=>{
     err.className='auth-err';btn.disabled=true;btn.textContent='Se verifica...';
     try{
-      if(!S.ghCfg)throw new Error('Configureaza mai intai conexiunea GitHub');
-      const sess=await ghLogin(ui.value.trim(),pi.value);
+      if(!S.sbCfg)throw new Error('Configureaza mai intai conexiunea Supabase');
+      const sess=await sbLogin(ui.value.trim(),pi.value);
       S.session=sess;saveSession(sess);
       S.loading=true;S.loadMsg='Se descarca datele din GitHub...';render();await yieldFrame();
-      await ghLoadAllData();
+      await sbLoadAllData();
       S.loading=false;render();
     }catch(e){err.textContent=e.message;err.className='auth-err show';btn.disabled=false;btn.textContent='Intra in aplicatie';}
   });
   [ui,pi].forEach(i=>i.addEventListener('keydown',e=>{if(e.key==='Enter')btn.click();}));
   card.appendChild(btn);
 
-  if(!S.ghCfg){
-    const l=sp('auth-link','Configureaza conexiunea GitHub →');l.style.display='block';l.style.marginTop='14px';
+  if(!S.sbCfg){
+    const l=sp('auth-link','Configureaza conexiunea Supabase →');l.style.display='block';l.style.marginTop='14px';
     l.addEventListener('click',()=>{S.authScreen='setup';render();});card.appendChild(l);
   } else {
-    const l=sp('auth-link','Reconfigureaza conexiunea GitHub');l.style.cssText='display:block;margin-top:12px;font-size:11px;color:var(--text3)';
+    const l=sp('auth-link','Reconfigureaza conexiunea Supabase');l.style.cssText='display:block;margin-top:12px;font-size:11px;color:var(--text3)';
     l.addEventListener('click',()=>{S.authScreen='setup';render();});card.appendChild(l);
   }
   wrap.appendChild(card);return wrap;
@@ -1856,61 +1852,50 @@ function renderSetup(){
   const wrap=dv('auth-wrap');
   const card=dv('auth-card');card.style.maxWidth='500px';
   card.appendChild(dv('auth-logo',sp('auth-logo-mark','⬡'),dv('auth-logo-text','PRODUCTION\nPLANNING SUITE')));
-  card.appendChild(sp('auth-title','Configurare GitHub'));
-
+  card.appendChild(sp('auth-title','Configurare Supabase'));
   const info=dv('auth-setup-info');
-  info.innerHTML=`
-<b>Pasii necesari:</b><br>
-1. Creaza un <b>repository PRIVAT</b> pe GitHub (ex: <code>pps-data</code>)<br>
-2. Mergi la <b>github.com → Settings → Developer settings →<br>Personal access tokens → Tokens (classic)</b><br>
-3. Click <b>Generate new token (classic)</b><br>
-4. Bifa <b>✓ repo</b> (Full control of private repositories)<br>
-5. Copiaza token-ul generat (incepe cu <code>ghp_</code>)`;
+  info.innerHTML='<b>Pasii necesari (5 minute, gratuit):</b><br>'+
+    '1. Mergi la <b>supabase.com</b> → Sign up (gratuit)<br>'+
+    '2. Click <b>New project</b> → alege un nume (ex: <code>pps-data</code>)<br>'+
+    '3. <b>Storage</b> (meniu stanga) → <b>New bucket</b> → Nume: <code>pps</code> → dezbifeaza "Public bucket" → Save<br>'+
+    '4. <b>Settings → API</b> → copiaza:<br>'+
+    '&nbsp;&nbsp;• <b>Project URL</b> (ex: <code>https://xxxx.supabase.co</code>)<br>'+
+    '&nbsp;&nbsp;• <b>anon public</b> key (incepe cu <code>eyJ...</code>)';
   card.appendChild(info);
-
   const fields=[];
-  [
-    ['GitHub Username (exact, case-sensitive)','text','ex: MariusSimion79','setup-owner'],
-    ['Repo privat pentru date','text','ex: pps-data (NU Production-planning)','setup-repo'],
-    ['Personal Access Token (ghp_...)','password','ghp_xxxxxxxxxxxxxxxxxxxx','setup-token']
-  ].forEach(([l,t,p,id])=>{
-    const{field,input}=mkAuthField(l,t,p,id);card.appendChild(field);fields.push(input);
-  });
-
+  [['Project URL','text','https://xxxxxxxxxxxx.supabase.co','setup-url'],
+   ['Anon Public Key (eyJ...)','password','eyJhbGciOiJIUzI1NiIs...','setup-key'],
+   ['Nume bucket','text','pps','setup-bucket'],
+  ].forEach(([l,t,p,id])=>{const{field,input}=mkAuthField(l,t,p,id);card.appendChild(field);fields.push(input);});
+  fields[2].value='pps';
   const err=dv('auth-err');card.appendChild(err);
-
-  // Test button
   const testBtn=el('button','auth-btn');testBtn.style.cssText='background:#059669;margin-top:10px';testBtn.textContent='🔌 Testeaza conexiunea';
   testBtn.addEventListener('click',async()=>{
-    const cfg={owner:fields[0].value.trim(),repo:fields[1].value.trim(),token:fields[2].value.trim()};
-    if(!cfg.owner||!cfg.repo||!cfg.token){err.textContent='Completeaza toate campurile';err.className='auth-err show';return;}
-    testBtn.disabled=true;testBtn.textContent='Se testeaza...';err.className='auth-err';
+    const cfg={url:fields[0].value.trim().replace(/\/$/,''),key:fields[1].value.trim(),bucket:fields[2].value.trim()||'pps'};
+    if(!cfg.url||!cfg.key){err.textContent='Completeaza URL-ul si cheia API';err.className='auth-err show';return;}
+    testBtn.disabled=true;testBtn.textContent='Se testeaza...';err.className='auth-err';err.style='';
     try{
-      const j=await ghTestConnection(cfg);
-      err.style.cssText='display:block;color:#15803d;background:#f0fdf4;border:1px solid #86efac;border-radius:4px;padding:8px 10px;margin-top:8px;font-size:11.5px';
-      err.textContent=`✓ Conexiune reusita! Repository: "${j.full_name}" (privat)`;
-    }catch(e){err.style='';err.textContent=e.message;err.className='auth-err show';}
+      await sbTestConnection(cfg);
+      err.style='display:block;color:#15803d;background:#f0fdf4;border:1px solid #86efac;border-radius:4px;padding:8px 10px;margin-top:8px;font-size:11.5px';
+      err.textContent='✓ Conexiune reusita! Supabase Storage functioneaza.';
+    }catch(e){err.textContent=e.message;err.className='auth-err show';}
     testBtn.disabled=false;testBtn.textContent='🔌 Testeaza conexiunea';
   });
   card.appendChild(testBtn);
-
   const btn=el('button','auth-btn');btn.textContent='Salveaza si initializeaza';btn.style.marginTop='8px';
   btn.addEventListener('click',async()=>{
-    const cfg={owner:fields[0].value.trim(),repo:fields[1].value.trim(),token:fields[2].value.trim()};
-    if(!cfg.owner||!cfg.repo||!cfg.token){err.textContent='Completeaza toate campurile';err.className='auth-err show';return;}
-    btn.disabled=true;btn.textContent='Se verifica...';err.className='auth-err';
+    const cfg={url:fields[0].value.trim().replace(/\/$/,''),key:fields[1].value.trim(),bucket:fields[2].value.trim()||'pps'};
+    if(!cfg.url||!cfg.key){err.textContent='Completeaza URL-ul si cheia API';err.className='auth-err show';return;}
+    btn.disabled=true;btn.textContent='Se verifica...';err.className='auth-err';err.style='';
     try{
-      await ghTestConnection(cfg);
-      S.ghCfg=cfg;await ghGetUsers();saveGhCfg(cfg);S.authScreen='login';render();
-    }catch(e){S.ghCfg=null;err.style='';err.textContent=e.message;err.className='auth-err show';btn.disabled=false;btn.textContent='Salveaza si initializeaza';}
+      await sbTestConnection(cfg);S.sbCfg=cfg;await sbGetUsers();saveSbCfg(cfg);S.authScreen='login';render();
+    }catch(e){S.sbCfg=null;err.textContent=e.message;err.className='auth-err show';btn.disabled=false;btn.textContent='Salveaza si initializeaza';}
   });
   card.appendChild(btn);
-
   const back=sp('auth-link','← Inapoi la login');back.style.display='block';back.style.marginTop='12px';
   back.addEventListener('click',()=>{S.authScreen='login';render();});card.appendChild(back);
   wrap.appendChild(card);return wrap;
 }
-
 function renderUsersTab(){
   const wrap=dv('users-wrap');
   wrap.appendChild(sp('','')).textContent='';
@@ -1938,7 +1923,7 @@ function renderUsersTab(){
     const u=newFields[0].value.trim(),p=newFields[1].value,r=rs.value;
     if(!u||!p){alert('Username si parola sunt obligatorii');return;}
     addBtn.disabled=true;addBtn.textContent='Se salveaza...';
-    try{await ghCreateUser(u,p,r);newFields.forEach(f=>f.value='');loadUsersTable(tableWrap);}
+    try{await sbCreateUser(u,p,r);newFields.forEach(f=>f.value='');loadUsersTable(tableWrap);}
     catch(e){alert('Eroare: '+e.message);}
     addBtn.disabled=false;addBtn.textContent='+ Adauga';
   });
@@ -1949,7 +1934,7 @@ function renderUsersTab(){
 async function loadUsersTable(container){
   container.innerHTML='<div style="padding:14px;color:var(--text3);font-size:12px">Se incarca...</div>';
   try{
-    const{users}=await ghGetUsers();
+    const{users}=await sbGetUsers();
     container.innerHTML='';
     const tbl=el('table','users-table');
     const thead=el('thead');const hr=el('tr');
@@ -1963,11 +1948,11 @@ async function loadUsersTable(container){
       const tdC=el('td');tdC.textContent=u.createdAt?new Date(u.createdAt).toLocaleDateString('ro-RO'):'—';
       const tdA=el('td');
       const cp=el('button','user-action-btn');cp.textContent='🔑 Schimba parola';
-      cp.addEventListener('click',async()=>{const np=prompt(`Parola noua pentru ${u.username}:`);if(!np)return;try{await ghChangePassword(u.username,np);alert('Parola schimbata!');}catch(e){alert(e.message);}});
+      cp.addEventListener('click',async()=>{const np=prompt(`Parola noua pentru ${u.username}:`);if(!np)return;try{await sbChangePassword(u.username,np);alert('Parola schimbata!');}catch(e){alert(e.message);}});
       tdA.appendChild(cp);
       if(u.username!==S.session?.username){
         const dl=el('button','user-action-btn del');dl.textContent='✕ Sterge';
-        dl.addEventListener('click',async()=>{if(!confirm(`Stergi ${u.username}?`))return;try{await ghDeleteUser(u.username);loadUsersTable(container);}catch(e){alert(e.message);}});
+        dl.addEventListener('click',async()=>{if(!confirm(`Stergi ${u.username}?`))return;try{await sbDeleteUser(u.username);loadUsersTable(container);}catch(e){alert(e.message);}});
         tdA.appendChild(dl);
       }
       tr.appendChild(tdU);tr.appendChild(tdR);tr.appendChild(tdC);tr.appendChild(tdA);tbody.appendChild(tr);
@@ -2038,14 +2023,14 @@ function render(){
 
   // User info + sync + logout in header
   const hr=dv('hdr-user');
-  if(S.ghCfg){
+  if(S.sbCfg){
     const syncBtn=el('button','hdr-sync-btn');syncBtn.id='hdr-sync-btn';
     syncBtn.textContent='↻ Sync';syncBtn.title='Sincronizeaza cu GitHub';
     syncBtn.addEventListener('click',async()=>{
       syncBtn.textContent='↻ ...';syncBtn.disabled=true;
       try{
         S.loading=true;S.loadMsg='Se sincronizeaza...';render();await yieldFrame();
-        await ghLoadAllData();
+        await sbLoadAllData();
         S.loading=false;render();
       }catch(e){
         S.loading=false;render();
@@ -2158,9 +2143,9 @@ function renderFisiereTab(){
         const ts=Date.now();
         if(fc.key==='bom')applyBom(rows,ts);else if(fc.key==='bow')applyBow(rows,ts);else if(fc.key==='po')applyPo(rows,ts);else applyOb(rows,ts);
         await dbSave(fc.key,{rows,ts});
-        if(S.ghCfg&&S.session?.role==='admin'){
-          lbl.innerHTML='';lbl.appendChild(el('span','spin-sm'));lbl.appendChild(document.createTextNode(' Sincronizare GitHub...'));
-          try{await ghSaveData(fc.key,rows,ts);}catch(e){console.warn('GitHub sync:',e);}
+        if(S.sbCfg&&S.session?.role==='admin'){
+          lbl.innerHTML='';lbl.appendChild(el('span','spin-sm'));lbl.appendChild(document.createTextNode(' Sincronizare Supabase...'));
+          try{await sbSaveData(fc.key,rows,ts);}catch(e){console.warn('Supabase sync:',e);}
         }
       }catch(err){console.error(err);}
       render();
@@ -3492,7 +3477,7 @@ function planQtyForRow(obKey){
 /* Persist plan to IndexedDB */
 async function savePlan(){
   await dbSave('plan',{entries:[...S.planData.entries()],obs:S.planObs,wcAvailHours:S.wcAvailHours});
-  if(S.ghCfg&&S.session) ghSavePlan().catch(e=>console.warn('GitHub plan save:',e));
+  if(S.sbCfg&&S.session) sbSavePlan().catch(e=>console.warn('Supabase plan save:',e));
 }
 
 function planQty(itemNo){
