@@ -4721,6 +4721,7 @@ function showPlanDetail(itemNo, plan){
     for(const op of rawOps){
       const seq=parseFloat(String(op['Ope seq']||'0').replace(',','.'))||0;
       const opNo=str(op['Operation no']||op['Ope seq']||'');
+      const opNoNum=parseFloat(String(op['Operation no']||'0').replace(',','.'))||0;
       const wcName=str(op['Ope name']||op['Ope descr']||'?');
       const runT=(parseFloat(String(op['Run time']||'0').replace(',','.'))||0);
       const setupT=(parseFloat(String(op['Setup time']||'0').replace(',','.'))||0);
@@ -4730,7 +4731,7 @@ function showPlanDetail(itemNo, plan){
       const remMin=(remT.runMin+remT.setupMin)/eff;
       const totMin=(totT.runMin+totT.setupMin)/eff;
       const donePct=totMin>0?Math.round((1-remMin/totMin)*100):100;
-      allOps.push({seq,opNo,wcName,runT,setupT,totalMin,remMin:Math.max(0,(remT.runMin+remT.setupMin)/eff),donePct,component:matNo===itemNo?'(FP)':matNo});
+      allOps.push({seq,opNo,opNoNum,wcName,runT,setupT,totalMin,remMin:Math.max(0,(remT.runMin+remT.setupMin)/eff),donePct,component:matNo===itemNo?'(FP)':matNo});
     }
     // Recurse into BOM children
     const bomRows=S.bomIdx?.get(key)||[];
@@ -4741,11 +4742,11 @@ function showPlanDetail(itemNo, plan){
   }
   collectOps(itemNo);
 
-  // Sort by seq ASC then by opNo
-  allOps.sort((a,b)=>a.seq-b.seq||(a.opNo<b.opNo?-1:1));
+  // Sort by Operation no ASC (numeric)
+  allOps.sort((a,b)=>a.opNoNum-b.opNoNum);
 
   if(allOps.length>0){
-    body.appendChild(sp('pdm-section-title','Toate operatiile (sortate dupa Ope seq ↑)'));
+    body.appendChild(sp('pdm-section-title','Toate operatiile (sortate dupa Operation no ↑)'));
     const tbl=el('table','pdm-wc-table');
     const thead=el('thead');const hr=el('tr');
     ['Seq','Ope no','Workcenter','Total','Ramas','% Real','Progres'].forEach(h=>{
