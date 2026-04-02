@@ -580,14 +580,15 @@ button { font-family: var(--sans); }
 .pdm-sub-matno{font-family:Arial,monospace;font-size:10.5px;color:var(--text3)}
 .pdm-print-btn{height:28px;padding:0 12px;border:1px solid var(--border);border-radius:4px;background:#fff;font-size:11px;cursor:pointer;color:var(--text2);transition:all .15s;margin-left:auto}
 .pdm-print-btn:hover{border-color:var(--accent);color:var(--accent)}
-@media print{
-  body>*{display:none!important}
-  #plan-detail-overlay{display:flex!important;position:static!important;background:none!important;padding:0!important}
-  .plan-modal{box-shadow:none!important;max-height:none!important;border-radius:0!important;width:100%!important}
-  .plan-modal-close,.pdm-print-btn{display:none!important}
-  .pdm-sub-tbody{display:table-row-group!important}
-  .pdm-op-toggle{display:none!important}
-}
+/* Print ONLY modal — hide everything else */
+.printing-modal body>*{display:none!important}
+.printing-modal #plan-detail-overlay{display:flex!important;position:fixed!important;inset:0!important;background:#fff!important;padding:20px!important;z-index:99999!important;align-items:flex-start!important;justify-content:center!important}
+.printing-modal .plan-modal{box-shadow:none!important;max-height:none!important;border-radius:0!important;width:100%!important;overflow:visible!important}
+.printing-modal .plan-modal-close,.printing-modal .pdm-print-btn{display:none!important}
+.printing-modal .pdm-sub-tbody{display:table-row-group!important}
+.printing-modal .pdm-op-toggle{display:none!important}
+.printing-modal .plan-modal-body{overflow:visible!important;max-height:none!important}
+
 @media(max-width:600px){
   .plan-modal{max-height:96vh;border-radius:8px 8px 0 0;align-self:flex-end}
   .plan-modal-overlay{align-items:flex-end;padding:0}
@@ -4657,7 +4658,55 @@ function showPlanDetail(itemNo, plan){
   hdrInfo.appendChild(sp('plan-modal-title',itemNo));
   hdrInfo.appendChild(sp('plan-modal-sub',(first.itemName||'')+(price>0?` · ${price.toFixed(2)} EUR/buc`:'')+` · ${qty.toLocaleString('ro-RO')} buc planificate`));
   const printBtn=el('button','pdm-print-btn');printBtn.textContent='🖨 Printeaza';
-  printBtn.addEventListener('click',()=>window.print());
+  printBtn.addEventListener('click',()=>{
+    const printWin=window.open('','_blank','width=950,height=750');
+    if(!printWin){alert('Permite ferestrele popup pentru a putea printa.');return;}
+    // Expand all sub-rows before cloning
+    const allSubs=modal.querySelectorAll('.pdm-sub-tbody');
+    const wasOpen=[];
+    allSubs.forEach(t=>{wasOpen.push(t.classList.contains('open'));t.classList.add('open');});
+    const bodyRef=modal.querySelector('.plan-modal-body');
+    const bodyHTML=bodyRef?bodyRef.innerHTML:'';
+    // Restore
+    allSubs.forEach((t,i)=>{if(!wasOpen[i])t.classList.remove('open');});
+    const subLbl=first.itemName||'';
+    const priceStr=price>0?` · ${price.toFixed(2)} EUR/buc`:'';
+    printWin.document.write(`<!DOCTYPE html><html lang="ro"><head>
+<meta charset="UTF-8"/><title>Detaliu plan — ${itemNo}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:Arial,sans-serif;font-size:12px;color:#111;background:#fff;padding:20px}
+h1{font-size:16px;font-weight:800;font-family:Arial,monospace;margin-bottom:3px}
+.sub{font-size:11px;color:#555;margin-bottom:14px}
+.pdm-real-bar{display:flex;align-items:center;gap:12px;padding:10px 14px;background:#f8fafc;border:1px solid #ccc;border-radius:6px;margin-bottom:14px;flex-wrap:wrap}
+.pdm-real-pct{font-size:28px;font-weight:900;font-family:Arial,monospace}
+.pdm-real-info{flex:1}
+.pdm-real-label{font-size:9px;font-weight:700;color:#666;letter-spacing:.06em;text-transform:uppercase;margin-bottom:1px;display:block}
+.pdm-real-val{font-size:12px;font-weight:600}
+.pdm-bar-bg{height:10px;background:#e5e7eb;border-radius:5px;overflow:hidden;width:130px;margin-top:6px}
+.pdm-bar-fill{height:100%;border-radius:5px}
+.pdm-section-title{font-size:9px;font-weight:700;color:#666;letter-spacing:.07em;text-transform:uppercase;margin:12px 0 6px;border-bottom:1px solid #ccc;padding-bottom:3px}
+.pdm-wc-table{width:100%;border-collapse:collapse;font-size:11px;page-break-inside:auto}
+.pdm-wc-table th{background:#f0f0f0;border-bottom:2px solid #999;padding:4px 8px;font-size:8.5px;font-weight:700;color:#555;letter-spacing:.06em;text-transform:uppercase;text-align:left}
+.pdm-wc-table td{padding:4px 8px;border-bottom:1px solid #ddd;vertical-align:middle}
+.pdm-op-row td{background:#f8f8f8;font-weight:700}
+.pdm-sub-tbody,.pdm-sub-tbody.open{display:table-row-group!important}
+.pdm-sub-row td{background:#fff;padding:3px 8px 3px 24px;font-size:10.5px;border-bottom:1px solid #eee;color:#333}
+.pdm-sub-matno{font-family:Arial,monospace;font-size:10px;color:#555}
+.pdm-num{font-family:Arial,monospace}
+.pdm-num.rem{color:#6d28d9;font-weight:700}
+.pdm-done{color:#15803d;font-size:10px;font-style:italic}
+.pdm-bar-cell{width:100px}
+.pdm-op-toggle,.pdm-print-btn,.plan-modal-close{display:none!important}
+tr{page-break-inside:avoid}
+</style></head><body>
+<h1>${itemNo}</h1>
+<div class="sub">${subLbl}${priceStr} &middot; ${qty.toLocaleString('ro-RO')} buc planificate &middot; Eficienta: ${S.eficientaPlan}%</div>
+${bodyHTML}
+</body></html>`);
+    printWin.document.close();
+    setTimeout(()=>{printWin.focus();printWin.print();},400);
+  });
   const closeBtn=dv('plan-modal-close');closeBtn.textContent='✕';
   closeBtn.addEventListener('click',()=>overlay.remove());
   const btnWrap=dv('');btnWrap.style.cssText='display:flex;gap:6px;flex-shrink:0;margin-left:10px;align-items:flex-start';
