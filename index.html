@@ -4727,12 +4727,23 @@ ${bodyHTML}
     printWin.document.close();
     setTimeout(()=>{printWin.focus();printWin.print();},400);
   });
+  const exportBtn=el('button','pdm-print-btn');exportBtn.textContent='⬇ Export Excel';exportBtn.id='pdm-export-btn';
   const closeBtn=dv('plan-modal-close');closeBtn.textContent='✕';
   closeBtn.addEventListener('click',()=>overlay.remove());
   const btnWrap=dv('');btnWrap.style.cssText='display:flex;gap:6px;flex-shrink:0;margin-left:10px;align-items:flex-start';
-  btnWrap.appendChild(printBtn);btnWrap.appendChild(closeBtn);
+  btnWrap.appendChild(printBtn);btnWrap.appendChild(exportBtn);btnWrap.appendChild(closeBtn);
   hdr.appendChild(hdrInfo);hdr.appendChild(btnWrap);
   modal.appendChild(hdr);
+
+  // ── Filter toggle bar ──
+  let showOnlyPending=false;
+  const filterBar=dv('');filterBar.style.cssText='display:flex;align-items:center;gap:10px;padding:6px 20px;background:#f8f9fb;border-bottom:1px solid var(--border);flex-shrink:0;font-size:11px;color:var(--text2)';
+  const toggleWrap=dv('');toggleWrap.style.cssText='display:flex;align-items:center;gap:6px;cursor:pointer;user-select:none';
+  const toggleCb=el('input');toggleCb.type='checkbox';toggleCb.id='pdm-pending-toggle';toggleCb.style.cursor='pointer';
+  const toggleLbl=el('label');toggleLbl.htmlFor='pdm-pending-toggle';toggleLbl.textContent='Arata doar operatii cu timp ramas > 0';toggleLbl.style.cursor='pointer';
+  toggleWrap.appendChild(toggleCb);toggleWrap.appendChild(toggleLbl);
+  filterBar.appendChild(toggleWrap);
+  modal.appendChild(filterBar);
 
   // ── Body ──
   const body=dv('plan-modal-body');
@@ -4824,7 +4835,10 @@ ${bodyHTML}
       const grp=opGroups.get(op.opNoNum);
       grp.sumRem+=remMin;
       grp.sumTotal+=totalMin;
-      grp.components.push({matNo,needing,remMin,totalMin,runT:op.runT,setupT:op.setupT});
+      // Calc total WIP for this component
+      const totalWIP=Object.values(wipByWC).reduce((s,v)=>s+Math.max(0,v),0);
+      grp.components.push({matNo,needing,remMin,totalMin,runT:op.runT,setupT:op.setupT,
+        onHand:stock.onHand,totalWIP,wipByWC,unitsNeeded});
     }
     // Recurse children
     const bomRows=S.bomIdx?.get(key)||[];
@@ -4876,7 +4890,9 @@ ${bodyHTML}
 
 
       // Group header row
-      const tbody=el('tbody');
+      const grpId='grp-'+grp.opNoNum;
+      const tbody=el('tbody');tbody.className='pdm-op-group-body';
+      tbody.setAttribute('data-grp',grpId);tbody.setAttribute('data-rem',grp.sumRem.toFixed(4));
 
       const tr=el('tr','pdm-op-row');if(done)tr.style.background='#f0fdf4';
       const toggle=sp('pdm-op-toggle','▶');
@@ -4898,15 +4914,19 @@ ${bodyHTML}
       barFill.style.cssText=`height:100%;border-radius:5px;background:${c};width:${Math.min(100,donePctFinal)}%`;
       barBg.appendChild(barFill);tdBar.appendChild(barBg);tr.appendChild(tdBar);
 
-      // Sub-rows (components)
-      const subTbody=el('tbody','pdm-sub-tbody');
+      // Sub-rows (components) — deduplicate by matNo (take highest remMin entry)
+      const subTbody=el('tbody','pdm-sub-tbody');subTbody.id='sub-'+grpId;
+      // Deduplicate components by matNo
+      const compMap=new Map();
       for(const comp of grp.components){
+        if(!compMap.has(comp.matNo)||comp.remMin>compMap.get(comp.matNo).remMin)
+          compMap.set(comp.matNo,comp);
+      }
+      for(const comp of compMap.values()){
         const sr=el('tr','pdm-sub-row');
-        // Toggle cell (empty)
-        sr.appendChild(el('td'));
-        // Op no (empty for sub)
-        sr.appendChild(el('td'));
-        // Component code
+        if(comp.remMin<=0.01)sr.style.background='#f0fdf4';
+        sr.appendChild(el('td'));sr.appendChild(el('td'));
+        // Mat code
         const tdC=el('td');tdC.appendChild(sp('pdm-sub-matno',comp.matNo===itemNo?'(FP) '+comp.matNo:comp.matNo));sr.appendChild(tdC);
         // Total
         const tdST=el('td');tdST.appendChild(sp('pdm-num',fmtMin(comp.totalMin)));sr.appendChild(tdST);
@@ -4916,10 +4936,39 @@ ${bodyHTML}
         if(compDone)tdSR.appendChild(sp('pdm-done','Finalizat'));
         else tdSR.appendChild(sp('pdm-num rem',fmtMin(comp.remMin)));
         sr.appendChild(tdSR);
-        // needing qty
-        const tdSQ=el('td');tdSQ.style.cssText='font-size:11px;color:var(--text3)';
-        tdSQ.textContent=`${Math.round(comp.needing)} buc`;sr.appendChild(tdSQ);
-        sr.appendChild(el('td'));
+        // On Hand / WIP split (instead of just needing buc)
+        const tdSQ=el('td');tdSQ.colSpan=2;
+        const stockDetail=dv('');stockDetail.style.cssText='font-size:10.5px;display:flex;flex-wrap:wrap;gap:6px';
+        const needed=comp.unitsNeeded;
+        const oh=Math.max(0,comp.onHand);
+        const wip=Math.max(0,comp.totalWIP);
+        // On Hand badge
+        if(oh>0||comp.remMin<=0.01){
+          const ohBadge=sp('stk-badge stk-oh',`📦 On Hand: ${fmtN(oh)}`);
+          stockDetail.appendChild(ohBadge);
+        }
+        // WIP badge
+        if(wip>0){
+          const wipBadge=sp('stk-badge stk-wip',`🔄 WIP: ${fmtN(wip)}`);
+          stockDetail.appendChild(wipBadge);
+          // WIP breakdown by WC
+          if(Object.keys(comp.wipByWC||{}).length>1){
+            const wcDetail=sp('','');wcDetail.style.cssText='font-size:9.5px;color:var(--text3);display:block;margin-top:2px;width:100%';
+            wcDetail.textContent='  '+Object.entries(comp.wipByWC).filter(([,q])=>q>0).map(([wc,q])=>`${wcLabel(wc)}: ${fmtN(q)}`).join(' · ');
+            stockDetail.appendChild(wcDetail);
+          }
+        }
+        // Needing
+        if(comp.needing>0){
+          const needBadge=sp('','');needBadge.style.cssText='font-size:10px;color:#dc2626;font-weight:600';
+          needBadge.textContent=`⚠ Mai trebuie: ${fmtN(comp.needing)} buc`;
+          stockDetail.appendChild(needBadge);
+        } else if(oh+wip>=needed&&needed>0){
+          const okBadge=sp('','');okBadge.style.cssText='font-size:10px;color:#15803d;font-weight:600';
+          okBadge.textContent=`✓ Acoperit (${fmtN(needed)} necesare)`;
+          stockDetail.appendChild(okBadge);
+        }
+        tdSQ.appendChild(stockDetail);sr.appendChild(tdSQ);
         subTbody.appendChild(sr);
       }
 
@@ -4934,6 +4983,18 @@ ${bodyHTML}
       tbl.appendChild(subTbody);
     }
     body.appendChild(tbl);
+
+    // Wire filter toggle
+    toggleCb.addEventListener('change',()=>{
+      showOnlyPending=toggleCb.checked;
+      tbl.querySelectorAll('tbody.pdm-op-group-body').forEach(tb=>{
+        const grpId=tb.getAttribute('data-grp');
+        const grpRem=parseFloat(tb.getAttribute('data-rem')||'0');
+        tb.style.display=showOnlyPending&&grpRem<=0?'none':'table-row-group';
+        const subTb=document.getElementById('sub-'+grpId);
+        if(subTb&&showOnlyPending&&grpRem<=0)subTb.style.display='none';
+      });
+    });
   } else {
     const info=dv('');info.style.cssText='padding:14px;text-align:center;color:var(--text3);font-size:12px';
     info.textContent='Nu exista operatii BOW pentru acest produs.';body.appendChild(info);
@@ -4942,6 +5003,69 @@ ${bodyHTML}
   modal.appendChild(body);
   overlay.appendChild(modal);
   document.body.appendChild(overlay);
+
+  // ── Wire export button ──
+  exportBtn.addEventListener('click',()=>exportPlanDetail(itemNo,plan,sortedGroups,pctDisplay,eff));
+}
+
+function exportPlanDetail(itemNo, plan, sortedGroups, pctDisplay, eff){
+  const rows=[];
+  const first=plan.entries[0]||{};
+  const price=getSalesPrice(itemNo,first);
+  const qty=plan.totalQty;
+
+  // Header info rows
+  rows.push({'Cod produs':itemNo,'Denumire':first.itemName||'','Pret EUR/buc':price,
+    'Cant. planificata':qty,'Eficienta %':S.eficientaPlan,'% Realizare':pctDisplay});
+  rows.push({}); // blank row
+
+  // Op groups
+  rows.push({'Cod produs':'Op no','Denumire':'Workcenter','Pret EUR/buc':'Total (min)',
+    'Cant. planificata':'Ramas (min)','Eficienta %':'% Realizat','% Realizare':'Status'});
+
+  for(const grp of sortedGroups){
+    const rawDonePct=grp.sumTotal>0?(1-grp.sumRem/grp.sumTotal)*100:100;
+    const donePct=rawDonePct>=100?100:Math.round(rawDonePct*100)/100;
+    const status=donePct>=100?'Finalizat':'In progres';
+
+    rows.push({
+      'Cod produs':grp.opNo,
+      'Denumire':grp.wcName,
+      'Pret EUR/buc':+grp.sumTotal.toFixed(2),
+      'Cant. planificata':+grp.sumRem.toFixed(2),
+      'Eficienta %':donePct+'%',
+      '% Realizare':status,
+    });
+
+    // Sub-rows: deduplicated components
+    const compMap=new Map();
+    for(const comp of grp.components){
+      if(!compMap.has(comp.matNo)||comp.remMin>compMap.get(comp.matNo).remMin)
+        compMap.set(comp.matNo,comp);
+    }
+    for(const comp of compMap.values()){
+      const oh=Math.max(0,comp.onHand);
+      const wip=Math.max(0,comp.totalWIP);
+      const compDone=comp.remMin<=0.01;
+      rows.push({
+        'Cod produs':'  '+comp.matNo,
+        'Denumire':comp.matNo===itemNo?'(FP)':'',
+        'Pret EUR/buc':+comp.totalMin.toFixed(2),
+        'Cant. planificata':compDone?0:+comp.remMin.toFixed(2),
+        'Eficienta %':'On Hand: '+oh+' · WIP: '+wip,
+        '% Realizare':compDone?'Finalizat':'Necesar: '+Math.round(comp.needing)+' buc',
+      });
+    }
+    rows.push({}); // blank between groups
+  }
+
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.json_to_sheet(rows);
+  ws['!cols']=[{wch:22},{wch:28},{wch:14},{wch:16},{wch:14},{wch:18}];
+  // Rename headers to Romanian
+  if(ws.A3){ws.A3.v='Op no';ws.B3.v='Workcenter';ws.C3.v='Total (min)';ws.D3.v='Ramas (min)';ws.E3.v='% Realizat';ws.F3.v='Status';}
+  XLSX.utils.book_append_sheet(wb,ws,'Detaliu '+itemNo.substring(0,20));
+  XLSX.writeFile(wb,`Detaliu_${itemNo}_${new Date().toISOString().slice(0,10)}.xlsx`);
 }
 
 function mkEmpty(h,p,showLeg){
