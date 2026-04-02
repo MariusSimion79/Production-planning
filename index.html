@@ -559,16 +559,35 @@ button { font-family: var(--sans); }
 .pdm-wc-table{width:100%;border-collapse:collapse;font-size:12px}
 .pdm-wc-table th{background:#f8f9fb;border-bottom:2px solid var(--border);padding:5px 10px;font-size:9px;font-weight:700;color:var(--text3);letter-spacing:.07em;text-transform:uppercase;text-align:left;white-space:nowrap}
 .pdm-wc-table td{padding:5px 10px;border-bottom:1px solid var(--border2);vertical-align:middle}
-.pdm-wc-table tr:hover td{background:#f8f9fb}
 .pdm-bar-cell{width:140px}
 .pdm-bar-bg{height:10px;background:#e5e7eb;border-radius:5px;overflow:hidden}
 .pdm-bar-fill{height:100%;border-radius:5px}
 .pdm-bar-fill.ok{background:#16a34a}
 .pdm-bar-fill.warn{background:#d97706}
 .pdm-bar-fill.over{background:#dc2626}
+.pdm-wc-table tr:hover td{background:#f8f9fb}
 .pdm-num{font-family:Arial,monospace;font-size:12px}
 .pdm-num.rem{color:#7c3aed;font-weight:700}
 .pdm-done{color:#15803d;font-size:10px;font-style:italic}
+.pdm-op-row{cursor:pointer;user-select:none;background:#f8f9fb}
+.pdm-op-row:hover td{background:#eff6ff!important}
+.pdm-op-toggle{display:inline-block;width:14px;font-size:9px;color:var(--text3);transition:transform .15s;transform-origin:50% 50%}
+.pdm-op-toggle.open{transform:rotate(90deg)}
+.pdm-sub-tbody{display:none}
+.pdm-sub-tbody.open{display:table-row-group}
+.pdm-sub-row td{background:#fafbfc;padding:4px 10px 4px 30px;font-size:11px;border-bottom:1px solid var(--border2)}
+.pdm-sub-row:hover td{background:#eff6ff!important}
+.pdm-sub-matno{font-family:Arial,monospace;font-size:10.5px;color:var(--text3)}
+.pdm-print-btn{height:28px;padding:0 12px;border:1px solid var(--border);border-radius:4px;background:#fff;font-size:11px;cursor:pointer;color:var(--text2);transition:all .15s;margin-left:auto}
+.pdm-print-btn:hover{border-color:var(--accent);color:var(--accent)}
+@media print{
+  body>*{display:none!important}
+  #plan-detail-overlay{display:flex!important;position:static!important;background:none!important;padding:0!important}
+  .plan-modal{box-shadow:none!important;max-height:none!important;border-radius:0!important;width:100%!important}
+  .plan-modal-close,.pdm-print-btn{display:none!important}
+  .pdm-sub-tbody{display:table-row-group!important}
+  .pdm-op-toggle{display:none!important}
+}
 @media(max-width:600px){
   .plan-modal{max-height:96vh;border-radius:8px 8px 0 0;align-self:flex-end}
   .plan-modal-overlay{align-items:flex-end;padding:0}
@@ -4624,10 +4643,7 @@ function showPlanDetail(itemNo, plan){
   const execTime=calcExecTime(itemNo,qty,needs);
   const totalExecTime=calcTotalExecTime(itemNo,qty);
   const pct=totalExecTime.total>0?Math.round((1-execTime.total/totalExecTime.total)*100):0;
-
-  // Color: 0%=red, 0-50%=orange, 50-99%=yellow, 100%=green
   const pctColor=pct===100?'#16a34a':pct>=50?'#ca8a04':pct>0?'#ea580c':'#dc2626';
-
   const first=plan.entries[0]||{};
   const price=getSalesPrice(itemNo,first);
 
@@ -4639,20 +4655,23 @@ function showPlanDetail(itemNo, plan){
   const hdr=dv('plan-modal-hdr');
   const hdrInfo=dv('');
   hdrInfo.appendChild(sp('plan-modal-title',itemNo));
-  hdrInfo.appendChild(sp('plan-modal-sub',(first.itemName||'')+(price>0?` · ${price.toFixed(2)} EUR/buc`:'')+(` · ${qty.toLocaleString('ro-RO')} buc planificate`)));
+  hdrInfo.appendChild(sp('plan-modal-sub',(first.itemName||'')+(price>0?` · ${price.toFixed(2)} EUR/buc`:'')+` · ${qty.toLocaleString('ro-RO')} buc planificate`));
+  const printBtn=el('button','pdm-print-btn');printBtn.textContent='🖨 Printeaza';
+  printBtn.addEventListener('click',()=>window.print());
   const closeBtn=dv('plan-modal-close');closeBtn.textContent='✕';
   closeBtn.addEventListener('click',()=>overlay.remove());
-  hdr.appendChild(hdrInfo);hdr.appendChild(closeBtn);
+  const btnWrap=dv('');btnWrap.style.cssText='display:flex;gap:6px;flex-shrink:0;margin-left:10px;align-items:flex-start';
+  btnWrap.appendChild(printBtn);btnWrap.appendChild(closeBtn);
+  hdr.appendChild(hdrInfo);hdr.appendChild(btnWrap);
   modal.appendChild(hdr);
 
   // ── Body ──
   const body=dv('plan-modal-body');
 
-  // ── Summary bar ──
+  // Summary bar
   const realBar=dv('pdm-real-bar');
   const pctEl=sp('pdm-real-pct',pct+'%');pctEl.style.color=pctColor;
   realBar.appendChild(pctEl);
-
   const infoWrap=dv('pdm-real-info');
   const addStat=(label,val)=>{
     const d=dv('');d.style.marginBottom='4px';
@@ -4665,102 +4684,153 @@ function showPlanDetail(itemNo, plan){
   const stockFP=S.stockIdx?.get(itemNo)||{onHand:0,totalWIP:0};
   addStat('Stoc disponibil (On Hand + WIP):',fmtN(Math.max(0,stockFP.onHand)+Math.max(0,stockFP.totalWIP))+' buc');
   realBar.appendChild(infoWrap);
-
-  // Progress bar — full=100% realized, empty=0% realized
   const progWrap=dv('');progWrap.style.cssText='width:130px;display:flex;flex-direction:column;gap:4px;align-self:center;flex-shrink:0';
-  const progBg=dv('');progBg.style.cssText='height:12px;background:#e5e7eb;border-radius:6px;overflow:hidden;position:relative';
+  const progBg=dv('');progBg.style.cssText='height:12px;background:#e5e7eb;border-radius:6px;overflow:hidden';
   const progFill=dv('');progFill.style.cssText=`height:100%;border-radius:6px;background:${pctColor};width:${pct}%;transition:width .6s`;
   progBg.appendChild(progFill);progWrap.appendChild(progBg);
   const progLbl=sp('','');progLbl.style.cssText='font-size:9px;color:var(--text3);text-align:center';
-  progLbl.textContent=`${pct}% realizat`;progWrap.appendChild(progLbl);
+  progLbl.textContent=pct+'% realizat';progWrap.appendChild(progLbl);
   realBar.appendChild(progWrap);
   body.appendChild(realBar);
 
   if(!S.bowIdx){
     const info=dv('');info.style.cssText='padding:20px;text-align:center;color:var(--text3);font-size:12px';
-    info.textContent='Incarca fisierul BOW pentru detalii pe operatii.';
+    info.textContent='Incarca fisierul BOW pentru detalii.';
     body.appendChild(info);modal.appendChild(body);overlay.appendChild(modal);document.body.appendChild(overlay);return;
   }
 
-  // ── Collect ALL operations sorted by Ope seq ASC ──
-  // Build a flat list: {seq, opNo, wcName, runT, setupT, remMin, totalMin, donePct, component}
-  // For each WC from totalExecTime, remaining comes from execTime (0 if done)
-  const allOps=[];
-  // Collect ops from BOW for this FP context (direct ops + all components)
+  // ── Build grouped ops: opNoNum → {opNo,seq,wcName, components:[{matNo,needing,remMin,totalMin}], sumRem, sumTotal} ──
+  const opGroups=new Map(); // opNoNum → group
   const seen=new Set();
 
-  function collectOps(matNo){
+  function collectOpsGrouped(matNo){
     const key=`${itemNo}__${matNo}`;
     if(seen.has(key))return;seen.add(key);
+
     const rawOps=S.bowIdx?.get(key)||[];
-    for(const op of rawOps){
-      const seq=parseFloat(String(op['Ope seq']||'0').replace(',','.'))||0;
-      const opNo=str(op['Operation no']||op['Ope seq']||'');
-      const opNoNum=parseFloat(String(op['Operation no']||'0').replace(',','.'))||0;
-      const wcName=str(op['Ope name']||op['Ope descr']||'?');
-      const runT=(parseFloat(String(op['Run time']||'0').replace(',','.'))||0);
-      const setupT=(parseFloat(String(op['Setup time']||'0').replace(',','.'))||0);
-      const totalMin=(runT*qty+setupT)/eff;
-      const remT=execTime.byWC.get(wcName)||{runMin:0,setupMin:0};
-      const totT=totalExecTime.byWC.get(wcName)||{runMin:0,setupMin:0};
-      const remMin=(remT.runMin+remT.setupMin)/eff;
-      const totMin=(totT.runMin+totT.setupMin)/eff;
-      const donePct=totMin>0?Math.round((1-remMin/totMin)*100):100;
-      allOps.push({seq,opNo,opNoNum,wcName,runT,setupT,totalMin,remMin:Math.max(0,(remT.runMin+remT.setupMin)/eff),donePct,component:matNo===itemNo?'(FP)':matNo});
+    const ops=rawOps.map(op=>({
+      seq:parseFloat(String(op['Ope seq']||'0').replace(',','.'))||0,
+      opNo:str(op['Operation no']||''),
+      opNoNum:parseFloat(String(op['Operation no']||'0').replace(',','.'))||0,
+      wcName:str(op['Ope name']||op['Ope descr']||'?'),
+      runT:parseFloat(String(op['Run time']||'0').replace(',','.'))||0,
+      setupT:parseFloat(String(op['Setup time']||'0').replace(',','.'))||0,
+    })).sort((a,b)=>a.seq-b.seq);
+
+    const stock=S.stockIdx?.get(matNo)||{onHand:0,wipByWC:{}};
+    const onHand=Math.max(0,stock.onHand);
+    const wipByWC=stock.wipByWC||{};
+    const unitsNeeded=matNo===itemNo?qty:(needs?.get(matNo)?.needed||qty);
+
+    // Build wipAtIdx map
+    const wipAtIdx=new Map();
+    for(const [poCol,wipQty] of Object.entries(wipByWC)){
+      if(!wipQty||wipQty<=0)continue;
+      const wcNamePO=wcLabel(poCol).toLowerCase();
+      let bestIdx=-1;
+      for(let i=ops.length-1;i>=0;i--){if(ops[i].wcName.toLowerCase()===wcNamePO){bestIdx=i;break;}}
+      if(bestIdx<0)continue;
+      wipAtIdx.set(bestIdx,(wipAtIdx.get(bestIdx)||0)+wipQty);
     }
-    // Recurse into BOM children
+
+    for(let i=0;i<ops.length;i++){
+      const op=ops[i];
+      let alreadyDone=onHand;
+      for(const [seqIdx,wq] of wipAtIdx){if(seqIdx>i)alreadyDone+=wq;}
+      const needing=Math.max(0,unitsNeeded-alreadyDone);
+      const remMin=(needing*op.runT+op.setupT)/eff;
+      const totalMin=(unitsNeeded*op.runT+op.setupT)/eff;
+
+      if(!opGroups.has(op.opNoNum)){
+        opGroups.set(op.opNoNum,{opNo:op.opNo,opNoNum:op.opNoNum,seq:op.seq,wcName:op.wcName,sumRem:0,sumTotal:0,components:[]});
+      }
+      const grp=opGroups.get(op.opNoNum);
+      grp.sumRem+=remMin;
+      grp.sumTotal+=totalMin;
+      grp.components.push({matNo,needing,remMin,totalMin,runT:op.runT,setupT:op.setupT});
+    }
+    // Recurse children
     const bomRows=S.bomIdx?.get(key)||[];
-    for(const row of bomRows){
-      const childMat=str(row['Material no']);
-      if(childMat)collectOps(childMat);
-    }
+    for(const row of bomRows){const cm=str(row['Material no']);if(cm)collectOpsGrouped(cm);}
   }
-  collectOps(itemNo);
+  collectOpsGrouped(itemNo);
 
-  // Sort by Operation no ASC (numeric)
-  allOps.sort((a,b)=>a.opNoNum-b.opNoNum);
+  // Sort groups by opNoNum ASC
+  const sortedGroups=[...opGroups.values()].sort((a,b)=>a.opNoNum-b.opNoNum);
 
-  if(allOps.length>0){
-    body.appendChild(sp('pdm-section-title','Toate operatiile (sortate dupa Operation no ↑)'));
-    const tbl=el('table','pdm-wc-table');
+  if(sortedGroups.length>0){
+    body.appendChild(sp('pdm-section-title','Operatii (sortate dupa Operation no ↑ · click pentru detalii)'));
+
+    const tbl=el('table','pdm-wc-table');tbl.style.width='100%';
     const thead=el('thead');const hr=el('tr');
-    ['Seq','Ope no','Workcenter','Total','Ramas','% Real','Progres'].forEach(h=>{
+    ['','Op no','Workcenter','Total','Ramas','% Real','Progres'].forEach(h=>{
       const th=el('th');th.textContent=h;hr.appendChild(th);});
     thead.appendChild(hr);tbl.appendChild(thead);
 
-    const tbody=el('tbody');
-    for(const op of allOps){
-      const done=op.donePct>=100;
-      const c=done?'#16a34a':op.donePct>=50?'#ca8a04':op.donePct>0?'#ea580c':'#dc2626';
-      const tr=el('tr');
-      if(done)tr.style.background='#f0fdf4';
+    for(const grp of sortedGroups){
+      const donePct=grp.sumTotal>0?Math.round((1-grp.sumRem/grp.sumTotal)*100):100;
+      const c=donePct===100?'#16a34a':donePct>=50?'#ca8a04':donePct>0?'#ea580c':'#dc2626';
+      const done=donePct>=100;
 
-      const tdSeq=el('td');tdSeq.style.cssText='font-family:Arial,monospace;font-size:11px;color:var(--text3);white-space:nowrap';tdSeq.textContent=op.seq;tr.appendChild(tdSeq);
-      const tdOp=el('td');tdOp.style.cssText='font-family:Arial,monospace;font-size:11px;color:var(--text3)';tdOp.textContent=op.opNo;tr.appendChild(tdOp);
+      // Group header row
+      const tbody=el('tbody');
 
-      const tdWc=el('td');tdWc.style.cssText=`font-weight:600;${done?'color:#15803d':''}`;
+      const tr=el('tr','pdm-op-row');if(done)tr.style.background='#f0fdf4';
+      const toggle=sp('pdm-op-toggle','▶');
+      const tdTog=el('td');tdTog.style.width='16px';tdTog.appendChild(toggle);tr.appendChild(tdTog);
+
+      const tdOp=el('td');tdOp.style.cssText='font-family:Arial,monospace;font-size:11px;color:var(--text3)';tdOp.textContent=grp.opNo;tr.appendChild(tdOp);
+      const tdWc=el('td');tdWc.style.fontWeight='700';
       if(done){const tick=sp('','✓ ');tick.style.color='#16a34a';tdWc.appendChild(tick);}
-      tdWc.appendChild(document.createTextNode(op.wcName));tr.appendChild(tdWc);
-
-      const tdTot=el('td');tdTot.appendChild(sp('pdm-num',fmtMin(op.totalMin)));tr.appendChild(tdTot);
-
+      tdWc.appendChild(document.createTextNode(grp.wcName));tr.appendChild(tdWc);
+      const tdTot=el('td');tdTot.appendChild(sp('pdm-num',fmtMin(grp.sumTotal)));tr.appendChild(tdTot);
       const tdRem=el('td');
-      if(done){const d=sp('pdm-done','Finalizat');tdRem.appendChild(d);}
-      else tdRem.appendChild(sp('pdm-num rem',fmtMin(op.remMin)));
+      if(done){tdRem.appendChild(sp('pdm-done','Finalizat'));}
+      else tdRem.appendChild(sp('pdm-num rem',fmtMin(grp.sumRem)));
       tr.appendChild(tdRem);
-
-      const tdPct=el('td');tdPct.appendChild(sp('pdm-num',op.donePct+'%'));tdPct.lastChild.style.color=c;tdPct.lastChild.style.fontWeight='700';tr.appendChild(tdPct);
-
-      // Bar: width=donePct%, full=green(100%), empty=red(0%)
+      const tdPct=el('td');tdPct.appendChild(sp('pdm-num',donePct+'%'));tdPct.lastChild.style.cssText=`color:${c};font-weight:700`;tr.appendChild(tdPct);
+      // Bar
       const tdBar=el('td','pdm-bar-cell');
-      const barBg=dv('pdm-bar-bg');
-      const barFill=dv('');barFill.style.cssText=`height:100%;border-radius:5px;background:${c};width:${op.donePct}%;transition:width .4s`;
-      barBg.appendChild(barFill);tdBar.appendChild(barBg);
-      tr.appendChild(tdBar);
+      const barBg=dv('pdm-bar-bg');const barFill=dv('');
+      barFill.style.cssText=`height:100%;border-radius:5px;background:${c};width:${donePct}%`;
+      barBg.appendChild(barFill);tdBar.appendChild(barBg);tr.appendChild(tdBar);
+
+      // Sub-rows (components)
+      const subTbody=el('tbody','pdm-sub-tbody');
+      for(const comp of grp.components){
+        const sr=el('tr','pdm-sub-row');
+        // Toggle cell (empty)
+        sr.appendChild(el('td'));
+        // Op no (empty for sub)
+        sr.appendChild(el('td'));
+        // Component code
+        const tdC=el('td');tdC.appendChild(sp('pdm-sub-matno',comp.matNo===itemNo?'(FP) '+comp.matNo:comp.matNo));sr.appendChild(tdC);
+        // Total
+        const tdST=el('td');tdST.appendChild(sp('pdm-num',fmtMin(comp.totalMin)));sr.appendChild(tdST);
+        // Remaining
+        const tdSR=el('td');
+        const compDone=comp.remMin<=0.01;
+        if(compDone)tdSR.appendChild(sp('pdm-done','Finalizat'));
+        else tdSR.appendChild(sp('pdm-num rem',fmtMin(comp.remMin)));
+        sr.appendChild(tdSR);
+        // needing qty
+        const tdSQ=el('td');tdSQ.style.cssText='font-size:11px;color:var(--text3)';
+        tdSQ.textContent=`${Math.round(comp.needing)} buc`;sr.appendChild(tdSQ);
+        sr.appendChild(el('td'));
+        subTbody.appendChild(sr);
+      }
+
+      // Toggle collapse/expand
+      tr.addEventListener('click',()=>{
+        const open=subTbody.classList.toggle('open');
+        toggle.classList.toggle('open',open);
+      });
 
       tbody.appendChild(tr);
+      tbl.appendChild(tbody);
+      tbl.appendChild(subTbody);
     }
-    tbl.appendChild(tbody);body.appendChild(tbl);
+    body.appendChild(tbl);
   } else {
     const info=dv('');info.style.cssText='padding:14px;text-align:center;color:var(--text3);font-size:12px';
     info.textContent='Nu exista operatii BOW pentru acest produs.';body.appendChild(info);
