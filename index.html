@@ -4641,7 +4641,6 @@ function renderScanHistory(histWrap,resultArea){
 }
 
 function showPlanDetail(itemNo, plan){
-  // Remove any existing modal
   document.getElementById('plan-detail-overlay')?.remove();
 
   const eff=(S.eficientaPlan||100)/100;
@@ -4650,13 +4649,15 @@ function showPlanDetail(itemNo, plan){
   const execTime=calcExecTime(itemNo,qty,needs);
   const totalExecTime=calcTotalExecTime(itemNo,qty);
   const pct=totalExecTime.total>0?Math.round((1-execTime.total/totalExecTime.total)*100):0;
-  const pctColor=pct>=80?'#15803d':pct>=40?'#d97706':'#dc2626';
+
+  // Color: 0%=red, 0-50%=orange, 50-99%=yellow, 100%=green
+  const pctColor=pct===100?'#16a34a':pct>=50?'#ca8a04':pct>0?'#ea580c':'#dc2626';
+
   const first=plan.entries[0]||{};
   const price=getSalesPrice(itemNo,first);
 
   const overlay=dv('plan-modal-overlay');overlay.id='plan-detail-overlay';
   overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
-
   const modal=dv('plan-modal');
 
   // ── Header ──
@@ -4672,9 +4673,8 @@ function showPlanDetail(itemNo, plan){
   // ── Body ──
   const body=dv('plan-modal-body');
 
-  // % Realizare summary
+  // ── Summary bar ──
   const realBar=dv('pdm-real-bar');
-
   const pctEl=sp('pdm-real-pct',pct+'%');pctEl.style.color=pctColor;
   realBar.appendChild(pctEl);
 
@@ -4685,98 +4685,109 @@ function showPlanDetail(itemNo, plan){
     d.appendChild(sp('pdm-real-val',' '+val));
     infoWrap.appendChild(d);
   };
-  addStat('Timp ramas (cu eficienta '+S.eficientaPlan+'%):',fmtMin(execTime.total/eff));
+  addStat('Timp ramas (eficienta '+S.eficientaPlan+'%):',fmtMin(execTime.total/eff));
   addStat('Timp total (fara stoc):',fmtMin(totalExecTime.total/eff));
-  const stock=S.stockIdx?.get(itemNo)||{onHand:0,totalWIP:0};
-  const avail=Math.max(0,stock.onHand)+Math.max(0,stock.totalWIP);
-  addStat('Stoc disponibil (On Hand + WIP):',fmtN(avail)+' buc');
+  const stockFP=S.stockIdx?.get(itemNo)||{onHand:0,totalWIP:0};
+  addStat('Stoc disponibil (On Hand + WIP):',fmtN(Math.max(0,stockFP.onHand)+Math.max(0,stockFP.totalWIP))+' buc');
   realBar.appendChild(infoWrap);
 
-  // Progress bar
-  const progWrap=dv('');progWrap.style.cssText='width:100%;display:flex;flex-direction:column;gap:4px;align-self:center;min-width:120px';
-  const progBg=dv('');progBg.style.cssText='height:8px;background:#e5e7eb;border-radius:4px;overflow:hidden';
-  const progFill=dv('');progFill.style.cssText=`height:100%;border-radius:4px;background:${pctColor};width:${pct}%;transition:width .5s`;
+  // Progress bar — full=100% realized, empty=0% realized
+  const progWrap=dv('');progWrap.style.cssText='width:130px;display:flex;flex-direction:column;gap:4px;align-self:center;flex-shrink:0';
+  const progBg=dv('');progBg.style.cssText='height:12px;background:#e5e7eb;border-radius:6px;overflow:hidden;position:relative';
+  const progFill=dv('');progFill.style.cssText=`height:100%;border-radius:6px;background:${pctColor};width:${pct}%;transition:width .6s`;
   progBg.appendChild(progFill);progWrap.appendChild(progBg);
-  const progLbl=sp('','');progLbl.style.cssText='font-size:10px;color:var(--text3);text-align:right';
+  const progLbl=sp('','');progLbl.style.cssText='font-size:9px;color:var(--text3);text-align:center';
   progLbl.textContent=`${pct}% realizat`;progWrap.appendChild(progLbl);
   realBar.appendChild(progWrap);
   body.appendChild(realBar);
 
-  // ── WC breakdown ──
-  if(execTime.byWC.size>0){
-    body.appendChild(sp('pdm-section-title','Timp ramas per Workcenter (ordonat dupa necesar)'));
+  if(!S.bowIdx){
+    const info=dv('');info.style.cssText='padding:20px;text-align:center;color:var(--text3);font-size:12px';
+    info.textContent='Incarca fisierul BOW pentru detalii pe operatii.';
+    body.appendChild(info);modal.appendChild(body);overlay.appendChild(modal);document.body.appendChild(overlay);return;
+  }
 
+  // ── Collect ALL operations sorted by Ope seq ASC ──
+  // Build a flat list: {seq, opNo, wcName, runT, setupT, remMin, totalMin, donePct, component}
+  // For each WC from totalExecTime, remaining comes from execTime (0 if done)
+  const allOps=[];
+  // Collect ops from BOW for this FP context (direct ops + all components)
+  const seen=new Set();
+
+  function collectOps(matNo){
+    const key=`${itemNo}__${matNo}`;
+    if(seen.has(key))return;seen.add(key);
+    const rawOps=S.bowIdx?.get(key)||[];
+    for(const op of rawOps){
+      const seq=parseFloat(String(op['Ope seq']||'0').replace(',','.'))||0;
+      const opNo=str(op['Operation no']||op['Ope seq']||'');
+      const wcName=str(op['Ope name']||op['Ope descr']||'?');
+      const runT=(parseFloat(String(op['Run time']||'0').replace(',','.'))||0);
+      const setupT=(parseFloat(String(op['Setup time']||'0').replace(',','.'))||0);
+      const totalMin=(runT*qty+setupT)/eff;
+      const remT=execTime.byWC.get(wcName)||{runMin:0,setupMin:0};
+      const totT=totalExecTime.byWC.get(wcName)||{runMin:0,setupMin:0};
+      const remMin=(remT.runMin+remT.setupMin)/eff;
+      const totMin=(totT.runMin+totT.setupMin)/eff;
+      const donePct=totMin>0?Math.round((1-remMin/totMin)*100):100;
+      allOps.push({seq,opNo,wcName,runT,setupT,totalMin,remMin:Math.max(0,(remT.runMin+remT.setupMin)/eff),donePct,component:matNo===itemNo?'(FP)':matNo});
+    }
+    // Recurse into BOM children
+    const bomRows=S.bomIdx?.get(key)||[];
+    for(const row of bomRows){
+      const childMat=str(row['Material no']);
+      if(childMat)collectOps(childMat);
+    }
+  }
+  collectOps(itemNo);
+
+  // Sort by seq ASC then by opNo
+  allOps.sort((a,b)=>a.seq-b.seq||(a.opNo<b.opNo?-1:1));
+
+  if(allOps.length>0){
+    body.appendChild(sp('pdm-section-title','Toate operatiile (sortate dupa Ope seq ↑)'));
     const tbl=el('table','pdm-wc-table');
     const thead=el('thead');const hr=el('tr');
-    ['Workcenter','Timp ramas','Run','Setup','Total fara stoc','Progres'].forEach(h=>{
+    ['Seq','Ope no','Workcenter','Total','Ramas','% Real','Progres'].forEach(h=>{
       const th=el('th');th.textContent=h;hr.appendChild(th);});
     thead.appendChild(hr);tbl.appendChild(thead);
 
-    // Get total time per WC for progress bar normalization
-    const maxTotal=Math.max(...[...execTime.byWC.values()].map(v=>(v.runMin+v.setupMin)/eff));
-
     const tbody=el('tbody');
-    // Sort by remaining time DESC
-    const sorted=[...execTime.byWC.entries()].sort((a,b)=>(b[1].runMin+b[1].setupMin)-(a[1].runMin+a[1].setupMin));
-    for(const [wc,t] of sorted){
-      const remMin=(t.runMin+t.setupMin)/eff;
-      const totalWcMin=(totalExecTime.byWC?.get(wc)||{runMin:0,setupMin:0});
-      const totalMin=(totalWcMin.runMin+totalWcMin.setupMin)/eff;
-      const wcPct=totalMin>0?Math.round((remMin/totalMin)*100):100;
-      const cls=wcPct<=40?'ok':wcPct<=80?'warn':'over';
-
+    for(const op of allOps){
+      const done=op.donePct>=100;
+      const c=done?'#16a34a':op.donePct>=50?'#ca8a04':op.donePct>0?'#ea580c':'#dc2626';
       const tr=el('tr');
+      if(done)tr.style.background='#f0fdf4';
 
-      // WC name
-      const tdWc=el('td');tdWc.style.fontWeight='600';tdWc.textContent=wc;tr.appendChild(tdWc);
+      const tdSeq=el('td');tdSeq.style.cssText='font-family:Arial,monospace;font-size:11px;color:var(--text3);white-space:nowrap';tdSeq.textContent=op.seq;tr.appendChild(tdSeq);
+      const tdOp=el('td');tdOp.style.cssText='font-family:Arial,monospace;font-size:11px;color:var(--text3)';tdOp.textContent=op.opNo;tr.appendChild(tdOp);
 
-      // Remaining
-      const tdRem=el('td');tdRem.appendChild(sp('pdm-num rem',fmtMin(remMin)));tr.appendChild(tdRem);
+      const tdWc=el('td');tdWc.style.cssText=`font-weight:600;${done?'color:#15803d':''}`;
+      if(done){const tick=sp('','✓ ');tick.style.color='#16a34a';tdWc.appendChild(tick);}
+      tdWc.appendChild(document.createTextNode(op.wcName));tr.appendChild(tdWc);
 
-      // Run
-      const tdRun=el('td');tdRun.appendChild(sp('pdm-num',fmtMin(t.runMin/eff)));tr.appendChild(tdRun);
+      const tdTot=el('td');tdTot.appendChild(sp('pdm-num',fmtMin(op.totalMin)));tr.appendChild(tdTot);
 
-      // Setup
-      const tdStp=el('td');tdStp.appendChild(sp('pdm-num',fmtMin(t.setupMin/eff)));tr.appendChild(tdStp);
+      const tdRem=el('td');
+      if(done){const d=sp('pdm-done','Finalizat');tdRem.appendChild(d);}
+      else tdRem.appendChild(sp('pdm-num rem',fmtMin(op.remMin)));
+      tr.appendChild(tdRem);
 
-      // Total
-      const tdTot=el('td');tdTot.appendChild(sp('pdm-num',totalMin>0?fmtMin(totalMin):'—'));tr.appendChild(tdTot);
+      const tdPct=el('td');tdPct.appendChild(sp('pdm-num',op.donePct+'%'));tdPct.lastChild.style.color=c;tdPct.lastChild.style.fontWeight='700';tr.appendChild(tdPct);
 
-      // Progress bar
+      // Bar: width=donePct%, full=green(100%), empty=red(0%)
       const tdBar=el('td','pdm-bar-cell');
       const barBg=dv('pdm-bar-bg');
-      const barFill=dv(`pdm-bar-fill ${cls}`);
-      const barPct=maxTotal>0?Math.round(remMin/maxTotal*100):0;
-      barFill.style.width=barPct+'%';
-      barBg.appendChild(barFill);
-      const barLbl=sp('','');barLbl.style.cssText='font-size:9px;color:var(--text3);margin-top:2px;display:block';
-      barLbl.textContent=wcPct+'% ramas';
-      tdBar.appendChild(barBg);tdBar.appendChild(barLbl);
+      const barFill=dv('');barFill.style.cssText=`height:100%;border-radius:5px;background:${c};width:${op.donePct}%;transition:width .4s`;
+      barBg.appendChild(barFill);tdBar.appendChild(barBg);
       tr.appendChild(tdBar);
 
       tbody.appendChild(tr);
     }
     tbl.appendChild(tbody);body.appendChild(tbl);
-  } else if(!S.bowIdx){
-    const info=dv('');info.style.cssText='padding:14px;text-align:center;color:var(--text3);font-size:12px';
-    info.textContent='Incarca fisierul BOW pentru a vedea detaliile pe operatii.';body.appendChild(info);
   } else {
-    body.appendChild(sp('pdm-done','Nu exista operatii BOW pentru acest produs.'));
-  }
-
-  // ── WC totals that are DONE (0 remaining) ──
-  if(totalExecTime.byWC?.size>0){
-    const doneWCs=[...totalExecTime.byWC.entries()].filter(([wc])=>!execTime.byWC.has(wc));
-    if(doneWCs.length>0){
-      body.appendChild(sp('pdm-section-title','Workcentere finalizate ✓'));
-      const doneWrap=dv('');doneWrap.style.cssText='display:flex;flex-wrap:wrap;gap:6px';
-      doneWCs.forEach(([wc,t])=>{
-        const pill=dv('');pill.style.cssText='background:#f0fdf4;border:1px solid #86efac;border-radius:4px;padding:4px 10px;font-size:11px;color:#15803d;font-weight:600';
-        pill.textContent=`✓ ${wc} (${fmtMin((t.runMin+t.setupMin)/eff)})`;
-        doneWrap.appendChild(pill);
-      });
-      body.appendChild(doneWrap);
-    }
+    const info=dv('');info.style.cssText='padding:14px;text-align:center;color:var(--text3);font-size:12px';
+    info.textContent='Nu exista operatii BOW pentru acest produs.';body.appendChild(info);
   }
 
   modal.appendChild(body);
