@@ -4750,27 +4750,46 @@ ${bodyHTML}
 
   // Summary bar
   const realBar=dv('pdm-real-bar');
-  const pctEl=sp('pdm-real-pct',pctDisplay);pctEl.style.color=pctColor;
+  const pctEl=sp('pdm-real-pct',pctDisplay);pctEl.style.cssText=`color:${pctColor};font-size:42px;font-weight:900;font-family:Arial,monospace;line-height:1`;
   realBar.appendChild(pctEl);
   const infoWrap=dv('pdm-real-info');
-  const addStat=(label,val)=>{
-    const d=dv('');d.style.marginBottom='4px';
-    d.appendChild(sp('pdm-real-label',label));
-    d.appendChild(sp('pdm-real-val',' '+val));
+  const addStat=(label,val,bold=false)=>{
+    const d=dv('');d.style.marginBottom='5px';
+    const lbl=sp('pdm-real-label',label);d.appendChild(lbl);
+    const v=sp('pdm-real-val',' '+val);
+    if(bold){v.style.cssText='font-size:15px;font-weight:800;color:var(--text)';} 
+    d.appendChild(v);
     infoWrap.appendChild(d);
   };
-  // sumRem will be updated from opGroups — use a ref element
-  const remStatVal=sp('pdm-real-val','');remStatVal.id='pdm-rem-stat';
-  const remStatD=dv('');remStatD.style.marginBottom='4px';
-  remStatD.appendChild(sp('pdm-real-label','Timp ramas (eficienta '+S.eficientaPlan+'%):'));
-  remStatD.appendChild(remStatVal);
-  infoWrap.appendChild(remStatD);
-  const totStatD=dv('');totStatD.style.marginBottom='4px';
-  totStatD.appendChild(sp('pdm-real-label','Timp total (fara stoc):'));
-  const totStatVal=sp('pdm-real-val','');totStatVal.id='pdm-tot-stat';
-  totStatD.appendChild(totStatVal);
-  infoWrap.appendChild(totStatD);
-  addStat('Stoc disponibil (On Hand + WIP):',fmtN(Math.max(0,stockFP.onHand)+Math.max(0,stockFP.totalWIP))+' buc');
+
+  // Placeholders — updated after opGroups are built
+  const remStatD=dv('');remStatD.style.marginBottom='5px';
+  const remLbl=sp('pdm-real-label','Timp ramas (eficienta '+S.eficientaPlan+'%):');
+  const remVal=sp('');remVal.style.cssText='font-size:15px;font-weight:800;color:#7c3aed';
+  remStatD.appendChild(remLbl);remStatD.appendChild(remVal);infoWrap.appendChild(remStatD);
+
+  const totStatD=dv('');totStatD.style.marginBottom='5px';
+  const totLbl=sp('pdm-real-label','Timp total (fara stoc):');
+  const totVal=sp('');totVal.style.cssText='font-size:15px;font-weight:800;color:var(--text)';
+  totStatD.appendChild(totLbl);totStatD.appendChild(totVal);infoWrap.appendChild(totStatD);
+
+  // On Hand — separate line
+  const ohStatD=dv('');ohStatD.style.marginBottom='3px';
+  ohStatD.appendChild(sp('pdm-real-label','On Hand (finalizat complet):'));
+  const ohVal=sp('');
+  const ohN=Math.max(0,stockFP.onHand);
+  ohVal.textContent=' '+fmtN(ohN)+' buc';
+  ohVal.style.cssText=`font-size:15px;font-weight:800;color:${ohN>0?'#16a34a':'var(--text3)'}`;
+  ohStatD.appendChild(ohVal);infoWrap.appendChild(ohStatD);
+
+  // WIP — separate line
+  const wipStatD=dv('');
+  wipStatD.appendChild(sp('pdm-real-label','WIP (in lucru):'));
+  const wipN=Math.max(0,stockFP.totalWIP);
+  const wipVal=sp('');
+  wipVal.textContent=' '+fmtN(wipN)+' buc';
+  wipVal.style.cssText=`font-size:15px;font-weight:800;color:${wipN>0?'#92400e':'var(--text3)'}`;
+  wipStatD.appendChild(wipVal);infoWrap.appendChild(wipStatD);
   realBar.appendChild(infoWrap);
   const progWrap=dv('');progWrap.style.cssText='width:130px;display:flex;flex-direction:column;gap:4px;align-self:center;flex-shrink:0';
   const progBg=dv('');progBg.style.cssText='height:12px;background:#e5e7eb;border-radius:6px;overflow:hidden';
@@ -4859,11 +4878,9 @@ ${bodyHTML}
   const pctFinalDisplay=pctFinal===100?'100%':pctFinal.toFixed(2)+'%';
   const pctFinalColor=pctFinal===100?'#16a34a':pctFinal>=50?'#ca8a04':pctFinal>0?'#ea580c':'#dc2626';
 
-  // Update summary bar with correct values
-  const remStatEl=document.getElementById('pdm-rem-stat');
-  if(remStatEl) remStatEl.textContent=' '+fmtMin(grpTotalRem);
-  const totStatEl=document.getElementById('pdm-tot-stat');
-  if(totStatEl) totStatEl.textContent=' '+fmtMin(grpTotalAll);
+  // Update summary bar with correct values from opGroups
+  remVal.textContent=' '+fmtMin(grpTotalRem);
+  totVal.textContent=' '+fmtMin(grpTotalAll);
   // Update pct display
   const pctEl2=document.querySelector('.pdm-real-pct');
   if(pctEl2){pctEl2.textContent=pctFinalDisplay;pctEl2.style.color=pctFinalColor;}
