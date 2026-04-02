@@ -1746,11 +1746,17 @@ function reTree(){
 
     // % Realizare cell — always first
     const pctCell=dv('wc-stat pct-realizare-cell');
-    const pct = (totalExecTime&&totalExecTime.total>0&&execTime)
-      ? Math.round((1 - execTime.total/totalExecTime.total)*100)
+    let pct = (totalExecTime&&totalExecTime.total>0&&execTime)
+      ? Math.min(100, Math.max(0,(1 - execTime.total/totalExecTime.total)*100))
       : null;
+    // Cap at 99.99% if not fully in stock
+    if(pct!==null&&pct>=100){
+      const oh=Math.max(0,S.stockIdx?.get(S.selFP)?.onHand||0);
+      if(oh < S.qtyInput) pct=99.99;
+    }
+    const pctDisplay=pct!==null?(pct===100?'100%':pct.toFixed(2)+'%'):'—';
     pctCell.appendChild(sp('wc-stat-name','% Realizare'));
-    const pctVal=sp('wc-stat-time pct-val', pct!==null ? pct+'%' : '—');
+    const pctVal=sp('wc-stat-time pct-val', pctDisplay);
     if(pct!==null){
       pctVal.style.color = pct>=80?'#15803d':pct>=40?'#d97706':'#dc2626';
     }
@@ -3883,7 +3889,14 @@ function calcPlanPct(itemNo, planQ){
   const execTime = calcExecTime(itemNo, planQ, needs);
   const totalExecTime = calcTotalExecTime(itemNo, planQ);
   if(!totalExecTime||totalExecTime.total<=0) return 0;
-  return Math.round((1 - execTime.total/totalExecTime.total)*100);
+  const raw = (1 - execTime.total/totalExecTime.total)*100;
+  const pct = Math.min(100, Math.max(0, raw));
+  // If time remaining=0 but FP not fully finished (On Hand < planQty) → 99.99%
+  if(pct>=100){
+    const oh=Math.max(0,S.stockIdx?.get(itemNo)?.onHand||0);
+    if(oh < planQ) return 99.99;
+  }
+  return Math.round(pct*100)/100;  // 2 decimal precision
 }
 
 function getPlanRows(){
@@ -3956,9 +3969,8 @@ function _buildPlanTbody(wrap){
       else if(colId==='realizare'){
         const eff=S.eficientaPlan/100;
         const pct=calcPlanPct(itemNo,plan.totalQty);
-        const stockR=S.stockIdx?.get(itemNo)||{onHand:0,totalWIP:0};
-        const avail=Math.min(Math.max(0,stockR.onHand)+Math.max(0,stockR.totalWIP),plan.totalQty);
-        const pctColor=pct>=80?'#15803d':pct>=40?'#d97706':'#dc2626';
+        const pctColor=pct>=100?'#15803d':pct>=50?'#ca8a04':pct>0?'#ea580c':'#dc2626';
+        const pctDisplay=pct===100?'100%':pct.toFixed(2)+'%';
         let execRemMin=0;
         if(S.bowIdx&&S.bomIdx){
           const needs=S.stockIdx?calcNeeds(itemNo,plan.totalQty):null;
@@ -3966,8 +3978,10 @@ function _buildPlanTbody(wrap){
           execRemMin=execRaw.total/eff;
         }
         const cell2=dv('plan-real-cell');
-        const pctEl=sp('plan-real-pct',pct+'%');pctEl.style.color=pctColor;
+        const pctEl=sp('plan-real-pct',pctDisplay);pctEl.style.color=pctColor;
         cell2.appendChild(pctEl);
+        const stockR=S.stockIdx?.get(itemNo)||{onHand:0,totalWIP:0};
+        const avail=Math.min(Math.max(0,stockR.onHand)+Math.max(0,stockR.totalWIP),plan.totalQty);
         cell2.appendChild(sp('plan-real-sub',`stoc: ${Math.round(avail)} / ${plan.totalQty} buc`));
         if(execRemMin>0){const rem=sp('plan-real-sub',`ramas: ${fmtMin(execRemMin)}`);rem.style.color='#7c3aed';rem.style.fontWeight='600';cell2.appendChild(rem);}
         td.appendChild(cell2);
@@ -4643,8 +4657,14 @@ function showPlanDetail(itemNo, plan){
   const needs=S.stockIdx?calcNeeds(itemNo,qty):null;
   const execTime=calcExecTime(itemNo,qty,needs);
   const totalExecTime=calcTotalExecTime(itemNo,qty);
-  const pct=totalExecTime.total>0?Math.round((1-execTime.total/totalExecTime.total)*100):0;
+  // ── Compute pct from groups (calculated below) — placeholder for now ──
+  // Will be updated after building opGroups
+  let pct=totalExecTime.total>0?Math.min(100,Math.max(0,(1-execTime.total/totalExecTime.total)*100)):0;
+  // 99.99 cap: if remaining=0 but FP not fully in stock
+  const stockFP=S.stockIdx?.get(itemNo)||{onHand:0,totalWIP:0};
+  if(pct>=100&&Math.max(0,stockFP.onHand)<qty) pct=99.99;
   const pctColor=pct===100?'#16a34a':pct>=50?'#ca8a04':pct>0?'#ea580c':'#dc2626';
+  const pctDisplay=pct===100?'100%':pct.toFixed(2)+'%';
   const first=plan.entries[0]||{};
   const price=getSalesPrice(itemNo,first);
 
@@ -4719,7 +4739,7 @@ ${bodyHTML}
 
   // Summary bar
   const realBar=dv('pdm-real-bar');
-  const pctEl=sp('pdm-real-pct',pct+'%');pctEl.style.color=pctColor;
+  const pctEl=sp('pdm-real-pct',pctDisplay);pctEl.style.color=pctColor;
   realBar.appendChild(pctEl);
   const infoWrap=dv('pdm-real-info');
   const addStat=(label,val)=>{
@@ -4728,17 +4748,25 @@ ${bodyHTML}
     d.appendChild(sp('pdm-real-val',' '+val));
     infoWrap.appendChild(d);
   };
-  addStat('Timp ramas (eficienta '+S.eficientaPlan+'%):',fmtMin(execTime.total/eff));
-  addStat('Timp total (fara stoc):',fmtMin(totalExecTime.total/eff));
-  const stockFP=S.stockIdx?.get(itemNo)||{onHand:0,totalWIP:0};
+  // sumRem will be updated from opGroups — use a ref element
+  const remStatVal=sp('pdm-real-val','');remStatVal.id='pdm-rem-stat';
+  const remStatD=dv('');remStatD.style.marginBottom='4px';
+  remStatD.appendChild(sp('pdm-real-label','Timp ramas (eficienta '+S.eficientaPlan+'%):'));
+  remStatD.appendChild(remStatVal);
+  infoWrap.appendChild(remStatD);
+  const totStatD=dv('');totStatD.style.marginBottom='4px';
+  totStatD.appendChild(sp('pdm-real-label','Timp total (fara stoc):'));
+  const totStatVal=sp('pdm-real-val','');totStatVal.id='pdm-tot-stat';
+  totStatD.appendChild(totStatVal);
+  infoWrap.appendChild(totStatD);
   addStat('Stoc disponibil (On Hand + WIP):',fmtN(Math.max(0,stockFP.onHand)+Math.max(0,stockFP.totalWIP))+' buc');
   realBar.appendChild(infoWrap);
   const progWrap=dv('');progWrap.style.cssText='width:130px;display:flex;flex-direction:column;gap:4px;align-self:center;flex-shrink:0';
   const progBg=dv('');progBg.style.cssText='height:12px;background:#e5e7eb;border-radius:6px;overflow:hidden';
-  const progFill=dv('');progFill.style.cssText=`height:100%;border-radius:6px;background:${pctColor};width:${pct}%;transition:width .6s`;
+  const progFill=dv('');progFill.style.cssText=`height:100%;border-radius:6px;background:${pctColor};width:${Math.min(100,pct)}%;transition:width .6s`;
   progBg.appendChild(progFill);progWrap.appendChild(progBg);
   const progLbl=sp('','');progLbl.style.cssText='font-size:9px;color:var(--text3);text-align:center';
-  progLbl.textContent=pct+'% realizat';progWrap.appendChild(progLbl);
+  progLbl.id='pdm-prog-lbl';progLbl.textContent=pctDisplay+' realizat';progWrap.appendChild(progLbl);
   realBar.appendChild(progWrap);
   body.appendChild(realBar);
 
@@ -4787,8 +4815,8 @@ ${bodyHTML}
       let alreadyDone=onHand;
       for(const [seqIdx,wq] of wipAtIdx){if(seqIdx>i)alreadyDone+=wq;}
       const needing=Math.max(0,unitsNeeded-alreadyDone);
-      const remMin=(needing*op.runT+op.setupT)/eff;
-      const totalMin=(unitsNeeded*op.runT+op.setupT)/eff;
+      const remMin = needing > 0 ? (needing * op.runT + op.setupT) / eff : 0;
+      const totalMin = unitsNeeded > 0 ? (unitsNeeded * op.runT + op.setupT) / eff : 0;
 
       if(!opGroups.has(op.opNoNum)){
         opGroups.set(op.opNoNum,{opNo:op.opNo,opNoNum:op.opNoNum,seq:op.seq,wcName:op.wcName,sumRem:0,sumTotal:0,components:[]});
@@ -4807,6 +4835,29 @@ ${bodyHTML}
   // Sort groups by opNoNum ASC
   const sortedGroups=[...opGroups.values()].sort((a,b)=>a.opNoNum-b.opNoNum);
 
+  // Compute totals from groups (authoritative — avoids calcExecTime indexing mismatch)
+  const grpTotalRem=sortedGroups.reduce((s,g)=>s+g.sumRem,0);
+  const grpTotalAll=sortedGroups.reduce((s,g)=>s+g.sumTotal,0);
+
+  // Recompute pct from groups (with 99.99% cap if FP not fully on hand)
+  let pctFinal=grpTotalAll>0?Math.min(100,(1-grpTotalRem/grpTotalAll)*100):0;
+  if(pctFinal>=100&&Math.max(0,stockFP.onHand)<qty) pctFinal=99.99;
+  const pctFinalDisplay=pctFinal===100?'100%':pctFinal.toFixed(2)+'%';
+  const pctFinalColor=pctFinal===100?'#16a34a':pctFinal>=50?'#ca8a04':pctFinal>0?'#ea580c':'#dc2626';
+
+  // Update summary bar with correct values
+  const remStatEl=document.getElementById('pdm-rem-stat');
+  if(remStatEl) remStatEl.textContent=' '+fmtMin(grpTotalRem);
+  const totStatEl=document.getElementById('pdm-tot-stat');
+  if(totStatEl) totStatEl.textContent=' '+fmtMin(grpTotalAll);
+  // Update pct display
+  const pctEl2=document.querySelector('.pdm-real-pct');
+  if(pctEl2){pctEl2.textContent=pctFinalDisplay;pctEl2.style.color=pctFinalColor;}
+  const progFill2=document.querySelector('#plan-detail-overlay .pdm-bar-fill');
+  if(progFill2){progFill2.style.background=pctFinalColor;progFill2.style.width=Math.min(100,pctFinal)+'%';}
+  const progLbl2=document.getElementById('pdm-prog-lbl');
+  if(progLbl2) progLbl2.textContent=pctFinalDisplay+' realizat';
+
   if(sortedGroups.length>0){
     body.appendChild(sp('pdm-section-title','Operatii (sortate dupa Operation no ↑ · click pentru detalii)'));
 
@@ -4817,9 +4868,12 @@ ${bodyHTML}
     thead.appendChild(hr);tbl.appendChild(thead);
 
     for(const grp of sortedGroups){
-      const donePct=grp.sumTotal>0?Math.round((1-grp.sumRem/grp.sumTotal)*100):100;
-      const c=donePct===100?'#16a34a':donePct>=50?'#ca8a04':donePct>0?'#ea580c':'#dc2626';
-      const done=donePct>=100;
+      const rawDonePct=grp.sumTotal>0?(1-grp.sumRem/grp.sumTotal)*100:100;
+      const donePctFinal=rawDonePct>=100?100:Math.max(0,Math.round(rawDonePct*100)/100);
+      const donePctDisplay=donePctFinal===100?'100%':donePctFinal.toFixed(2)+'%';
+      const done=donePctFinal>=100;
+      const c=done?'#16a34a':donePctFinal>=50?'#ca8a04':donePctFinal>0?'#ea580c':'#dc2626';
+
 
       // Group header row
       const tbody=el('tbody');
@@ -4837,11 +4891,11 @@ ${bodyHTML}
       if(done){tdRem.appendChild(sp('pdm-done','Finalizat'));}
       else tdRem.appendChild(sp('pdm-num rem',fmtMin(grp.sumRem)));
       tr.appendChild(tdRem);
-      const tdPct=el('td');tdPct.appendChild(sp('pdm-num',donePct+'%'));tdPct.lastChild.style.cssText=`color:${c};font-weight:700`;tr.appendChild(tdPct);
+      const tdPct=el('td');tdPct.appendChild(sp('pdm-num',donePctDisplay));tdPct.lastChild.style.cssText=`color:${c};font-weight:700`;tr.appendChild(tdPct);
       // Bar
       const tdBar=el('td','pdm-bar-cell');
       const barBg=dv('pdm-bar-bg');const barFill=dv('');
-      barFill.style.cssText=`height:100%;border-radius:5px;background:${c};width:${donePct}%`;
+      barFill.style.cssText=`height:100%;border-radius:5px;background:${c};width:${Math.min(100,donePctFinal)}%`;
       barBg.appendChild(barFill);tdBar.appendChild(barBg);tr.appendChild(tdBar);
 
       // Sub-rows (components)
