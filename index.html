@@ -829,9 +829,10 @@ const S={
   planObs:{},
   planFilter:{
     colFilters:{},
-    realizarePct:'all',   // 'all'|'0-25'|'26-50'|'51-75'|'76-99'|'100'
+    realizarePct:'all',
     colOrder:['itemNo','itemName','customer','qty','valoare','realizare','obs','_del'],
     colWidths:{itemNo:140,itemName:200,customer:200,qty:110,valoare:120,realizare:140,obs:200,_del:80},
+    visibleCols:new Set(['itemNo','itemName','customer','qty','valoare','realizare','obs','_del']),
   },
   meta:{bom:{rows:0,ts:null},bow:{rows:0,ts:null},po:{rows:0,ts:null},ob:{rows:0,ts:null}},
   loading:false,loadMsg:'Se incarca datele salvate...'
@@ -3744,6 +3745,34 @@ function renderPlanificare(){
   clearBtn.addEventListener('click',()=>{if(confirm('Golesti tot planul de productie?')){S.planData=new Map();savePlan();renderPlanPage(planWrap);updatePlanStatsBar();}});
   tb.appendChild(clearBtn);
 
+  // Column picker
+  const colPickBtn=el('button','tbtn');colPickBtn.textContent='⚙ Coloane';
+  colPickBtn.addEventListener('click',e=>{
+    e.stopPropagation();
+    const existingPicker=document.getElementById('plan-col-picker');
+    if(existingPicker){existingPicker.remove();return;}
+    const picker=dv('ob-col-picker');picker.id='plan-col-picker';
+    const COL_LABELS_PICK={itemNo:'Item no',itemName:'Denumire',customer:'Client',qty:'Cantitate',valoare:'Valoare EUR',realizare:'% Realizare',obs:'Observatii',_del:'Sterge'};
+    S.planFilter.colOrder.forEach(cid=>{
+      const item=dv('ob-col-item');
+      const cb=el('input');cb.type='checkbox';cb.checked=S.planFilter.visibleCols.has(cid);
+      cb.addEventListener('change',()=>{
+        if(cid==='_del'){cb.checked=true;return;}// always show delete
+        if(cb.checked)S.planFilter.visibleCols.add(cid);
+        else S.planFilter.visibleCols.delete(cid);
+        renderPlanPage(planWrap);
+      });
+      item.appendChild(cb);item.appendChild(document.createTextNode(COL_LABELS_PICK[cid]||cid));
+      picker.appendChild(item);
+    });
+    document.body.appendChild(picker);
+    const rect=colPickBtn.getBoundingClientRect();
+    picker.style.cssText+=`;top:${rect.bottom+2}px;left:${rect.left}px;`;
+    const close=ev=>{if(!picker.contains(ev.target)&&ev.target!==colPickBtn){picker.remove();document.removeEventListener('mousedown',close);}};
+    setTimeout(()=>document.addEventListener('mousedown',close),50);
+  });
+  tb.appendChild(colPickBtn);
+
   // Efficiency input
   const effWrap=dv('plan-eff-wrap');
   effWrap.appendChild(sp('plan-eff-lbl','Eficienta:'));
@@ -3874,7 +3903,7 @@ function _updatePlanSummary(wrap){
 
 function _buildPlanTbody(wrap){
   const pf2=S.planFilter;
-  const visCols=pf2.colOrder;
+  const visCols=pf2.colOrder.filter(c=>pf2.visibleCols.has(c));
   const rows=getPlanRows();
   const tbody=el('tbody');
   for(const [itemNo,plan] of rows){
@@ -3952,6 +3981,7 @@ function renderPlanPage(wrap){
   }
 
   const pf2=S.planFilter;
+  const visCols=pf2.colOrder.filter(c=>pf2.visibleCols.has(c));
   const COL_LABELS={itemNo:'Item no',itemName:'Denumire',customer:'Client',qty:'Cantitate',valoare:'Valoare EUR',realizare:'% Realizare',obs:'Observatii',_del:''};
   const FILTERABLE=new Set(['itemNo','itemName','customer','qty','obs']);
 
@@ -3967,7 +3997,7 @@ function renderPlanPage(wrap){
   const thead=el('thead');
   const hr=el('tr');
   let dragSrc=null;
-  pf2.colOrder.forEach(colId=>{
+  visCols.forEach(colId=>{
     const w=pf2.colWidths[colId]||120;
     const th=el('th');th.style.width=w+'px';th.setAttribute('data-col',colId);
     const inner=dv('plan-th-inner');
@@ -3977,7 +4007,7 @@ function renderPlanPage(wrap){
     rh.addEventListener('mousedown',e=>{
       e.stopPropagation();e.preventDefault();rh.classList.add('dragging');
       const startX=e.clientX,startW=pf2.colWidths[colId]||w;
-      const onMove=ev=>{const nw=Math.max(50,startW+(ev.clientX-startX));pf2.colWidths[colId]=nw;th.style.width=nw+'px';tbl.querySelectorAll(`td:nth-child(${pf2.colOrder.indexOf(colId)+1})`).forEach(td=>td.style.width=nw+'px');};
+      const onMove=ev=>{const nw=Math.max(50,startW+(ev.clientX-startX));pf2.colWidths[colId]=nw;th.style.width=nw+'px';tbl.querySelectorAll(`td:nth-child(${visCols.indexOf(colId)+1})`).forEach(td=>td.style.width=nw+'px');};
       const onUp=()=>{rh.classList.remove('dragging');document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);};
       document.addEventListener('mousemove',onMove);document.addEventListener('mouseup',onUp);
     });
@@ -4004,7 +4034,7 @@ function renderPlanPage(wrap){
 
   // THEAD — filter row
   const fr=el('tr','plan-filter-row');
-  pf2.colOrder.forEach(colId=>{
+  visCols.forEach(colId=>{
     const th=el('th');th.style.width=(pf2.colWidths[colId]||120)+'px';
     if(FILTERABLE.has(colId)){
       const inp=el('input','plan-col-filter');
