@@ -2109,7 +2109,7 @@ function render(){
   body.appendChild(sbarOverlay);
 
   if(S.tab==='fisiere')       body.appendChild(renderFisiereTab());
-  else if(S.tab==='structura'){body.appendChild(renderSidebar());body.appendChild(renderStructura());}
+  else if(S.tab==='structura'){body.classList.add('has-structura');body.appendChild(renderSidebar());body.appendChild(renderStructura());}
   else if(S.tab==='stocuri')  body.appendChild(renderStocuriTab());
   else if(S.tab==='orderbook')body.appendChild(renderOrderBook());
   else if(S.tab==='rapoarte') body.appendChild(renderRapoarte());
@@ -2213,46 +2213,61 @@ function renderSidebar(){
     e.appendChild(sp('empty-ico','📂'));e.appendChild(p);sbar.appendChild(e);return sbar;
   }
 
-  // Mobile toggle header
-  const mobileHdr=dv('');
-  mobileHdr.style.cssText='display:none;align-items:center;justify-content:space-between;padding:10px 14px;background:#f8f9fb;border-bottom:1px solid var(--border);cursor:pointer;user-select:none';
-  mobileHdr.id='sbar-mobile-hdr';
-  const mobileTitle=sp('','Selecteaza produs');
-  mobileTitle.style.cssText='font-size:12px;font-weight:600;color:var(--text)';
-  const mobileToggle=sp('','▼');
-  mobileToggle.id='sbar-toggle-arrow';
-  mobileToggle.style.cssText='font-size:10px;color:var(--text3);transition:transform .2s';
-  mobileHdr.appendChild(mobileTitle);mobileHdr.appendChild(mobileToggle);
-  mobileHdr.addEventListener('click',()=>{
-    const body=document.getElementById('sbar-collapsible');
-    if(!body)return;
-    const collapsed=body.style.display==='none';
-    body.style.display=collapsed?'flex':'none';
-    mobileToggle.style.transform=collapsed?'rotate(0deg)':'rotate(-90deg)';
-  });
-  sbar.appendChild(mobileHdr);
-
-  // Collapsible body (search + list)
-  const collBody=dv('');collBody.id='sbar-collapsible';
-  collBody.style.cssText='flex-direction:column;flex:1;overflow:hidden;display:flex';
-
+  // Search always visible
   const sw=dv('s-wrap');
   const si=el('input','s-inp');si.placeholder='Cauta produs...';si.value=S.q||'';
-  si.addEventListener('input',e2=>{S.q=e2.target.value;S.selFP=null;renderPList(pl);});
-  sw.appendChild(si);sw.appendChild(sp('s-ico','⌕'));collBody.appendChild(sw);
+  si.addEventListener('input',e2=>{S.q=e2.target.value;S.selFP=null;renderPList(pl);renderPList(plMobile);});
+  sw.appendChild(si);sw.appendChild(sp('s-ico','⌕'));
+  sbar.appendChild(sw);
+
   const q=(S.q||'').toLowerCase();
   const filtered=S.fps.filter(f=>!q||f.code.toLowerCase().includes(q)||f.name.toLowerCase().includes(q));
-  collBody.appendChild(dv('s-count',`${filtered.length.toLocaleString()} produse`));
-  const pl=dv('plist');renderPList(pl);collBody.appendChild(pl);
-  sbar.appendChild(collBody);
+  const countEl=dv('s-count');countEl.id='sbar-count';
+  countEl.textContent=`${filtered.length.toLocaleString()} produse`;
+  sbar.appendChild(countEl);
 
-  // Mobile CSS injection (once)
+  // Mobile: collapsible list toggle
+  const mobToggle=dv('');mobToggle.id='sbar-mob-toggle';
+  mobToggle.style.cssText='display:none;align-items:center;justify-content:space-between;padding:7px 14px;background:#eff6ff;border-bottom:1px solid #bfdbfe;cursor:pointer;user-select:none;flex-shrink:0';
+  const mobLabel=sp('','Lista produse ▼');
+  mobLabel.id='sbar-mob-label';
+  mobLabel.style.cssText='font-size:11px;font-weight:600;color:var(--accent)';
+  mobToggle.appendChild(mobLabel);
+  let mobOpen=false;
+  mobToggle.addEventListener('click',()=>{
+    mobOpen=!mobOpen;
+    mobLabel.textContent=mobOpen?'Lista produse ▲':'Lista produse ▼';
+    plMobile.style.display=mobOpen?'block':'none';
+  });
+  sbar.appendChild(mobToggle);
+
+  // Mobile product list (collapsed by default)
+  const plMobile=dv('plist');plMobile.id='plist-mobile';plMobile.style.display='none';
+  renderPList(plMobile);
+  sbar.appendChild(plMobile);
+
+  // Desktop product list (always shown, hidden on mobile via CSS)
+  const pl=dv('plist');pl.id='plist-desktop';
+  renderPList(pl);
+  sbar.appendChild(pl);
+
+  // Inject mobile overrides once
   if(!document.getElementById('sbar-mobile-css')){
     const style=document.createElement('style');style.id='sbar-mobile-css';
-    style.textContent=`@media(max-width:768px){
-      #sbar-mobile-hdr{display:flex!important}
-      .sbar{flex-direction:column}
-    }`;
+    style.textContent=`
+@media(max-width:768px){
+  #sbar-mob-toggle{display:flex!important}
+  #plist-desktop{display:none!important}
+  .sbar{
+    position:static!important;transform:none!important;
+    width:100%!important;flex-shrink:0;
+    border-right:none!important;border-bottom:1px solid var(--border);
+    max-height:none;overflow:visible;
+  }
+  .s-wrap{position:sticky;top:0;z-index:2;background:#fff}
+  .body.has-structura{flex-direction:column!important}
+  #zoom-area-structura{min-height:0;flex:1}
+}`;
     document.head.appendChild(style);
   }
 
@@ -3556,9 +3571,30 @@ function planQtyForRow(obKey){
 }
 
 /* Persist plan to IndexedDB */
+function showToast(msg,type='ok',dur=2500){
+  const t=document.createElement('div');
+  t.style.cssText=`position:fixed;bottom:20px;left:50%;transform:translateX(-50%);
+    ${type==='ok'?'background:#15803d':'background:#dc2626'};
+    color:#fff;padding:8px 18px;border-radius:20px;font-size:12px;font-weight:600;
+    z-index:99999;box-shadow:0 4px 12px rgba(0,0,0,.25);white-space:nowrap;
+    animation:fadeInUp .2s ease`;
+  t.textContent=msg;
+  if(!document.getElementById('toast-css')){
+    const st=document.createElement('style');st.id='toast-css';
+    st.textContent='@keyframes fadeInUp{from{opacity:0;transform:translateX(-50%) translateY(8px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}';
+    document.head.appendChild(st);
+  }
+  document.body.appendChild(t);
+  setTimeout(()=>{t.style.opacity='0';t.style.transition='opacity .3s';setTimeout(()=>t.remove(),300);},dur);
+}
+
 async function savePlan(){
   await dbSave('plan',{entries:[...S.planData.entries()],obs:S.planObs,wcAvailHours:S.wcAvailHours});
-  if(S.sbCfg&&S.session) sbSavePlan().catch(e=>console.warn('Supabase plan save:',e));
+  if(S.sbCfg&&S.session){
+    sbSavePlan()
+      .then(()=>showToast('✓ Plan sincronizat'))
+      .catch(e=>{console.warn('Supabase plan save failed:',e.message);showToast('⚠ Sync esuat: '+e.message,'err',4000);});
+  }
 }
 
 function planQty(itemNo){
