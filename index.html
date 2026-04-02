@@ -4657,12 +4657,12 @@ function showPlanDetail(itemNo, plan){
   const needs=S.stockIdx?calcNeeds(itemNo,qty):null;
   const execTime=calcExecTime(itemNo,qty,needs);
   const totalExecTime=calcTotalExecTime(itemNo,qty);
-  // ── Compute pct from groups (calculated below) — placeholder for now ──
-  // Will be updated after building opGroups
-  let pct=totalExecTime.total>0?Math.min(100,Math.max(0,(1-execTime.total/totalExecTime.total)*100)):0;
-  // 99.99 cap: if remaining=0 but FP not fully in stock
   const stockFP=S.stockIdx?.get(itemNo)||{onHand:0,totalWIP:0};
-  if(pct>=100&&Math.max(0,stockFP.onHand)<qty) pct=99.99;
+  const fullyOnHand=Math.max(0,stockFP.onHand)>=qty;
+  let pct=fullyOnHand?100
+    :totalExecTime.total>0?Math.min(99.99,Math.max(0,(1-execTime.total/totalExecTime.total)*100))
+    :0;
+  if(pct>=100&&!fullyOnHand)pct=99.99;
   const pctColor=pct===100?'#16a34a':pct>=50?'#ca8a04':pct>0?'#ea580c':'#dc2626';
   const pctDisplay=pct===100?'100%':pct.toFixed(2)+'%';
   const first=plan.entries[0]||{};
@@ -4762,34 +4762,29 @@ ${bodyHTML}
     infoWrap.appendChild(d);
   };
 
-  // Placeholders — updated after opGroups are built
+  // Placeholders — set immediately from execTime, updated after opGroups are built
   const remStatD=dv('');remStatD.style.marginBottom='5px';
-  const remLbl=sp('pdm-real-label','Timp ramas (eficienta '+S.eficientaPlan+'%):');
-  const remVal=sp('');remVal.style.cssText='font-size:15px;font-weight:800;color:#7c3aed';
-  remStatD.appendChild(remLbl);remStatD.appendChild(remVal);infoWrap.appendChild(remStatD);
+  remStatD.appendChild(sp('pdm-real-label','Timp ramas (eficienta '+S.eficientaPlan+'%):'));
+  const remVal=sp('pdm-real-val');
+  remVal.textContent=' '+(fullyOnHand?'0 min':fmtMin(execTime.total/eff));
+  remVal.style.cssText='font-size:15px;font-weight:800;color:#7c3aed';
+  remStatD.appendChild(remVal);infoWrap.appendChild(remStatD);
 
   const totStatD=dv('');totStatD.style.marginBottom='5px';
-  const totLbl=sp('pdm-real-label','Timp total (fara stoc):');
-  const totVal=sp('');totVal.style.cssText='font-size:15px;font-weight:800;color:var(--text)';
-  totStatD.appendChild(totLbl);totStatD.appendChild(totVal);infoWrap.appendChild(totStatD);
+  totStatD.appendChild(sp('pdm-real-label','Timp total (fara stoc):'));
+  const totVal=sp('pdm-real-val');
+  totVal.textContent=' '+fmtMin(totalExecTime.total/eff);
+  totVal.style.cssText='font-size:15px;font-weight:800;color:var(--text)';
+  totStatD.appendChild(totVal);infoWrap.appendChild(totStatD);
 
-  // On Hand — separate line
-  const ohStatD=dv('');ohStatD.style.marginBottom='3px';
-  ohStatD.appendChild(sp('pdm-real-label','On Hand (finalizat complet):'));
-  const ohVal=sp('');
+  // On Hand only (not WIP)
+  const ohStatD=dv('');
+  ohStatD.appendChild(sp('pdm-real-label','On Hand:'));
   const ohN=Math.max(0,stockFP.onHand);
-  ohVal.textContent=' '+fmtN(ohN)+' buc';
-  ohVal.style.cssText=`font-size:15px;font-weight:800;color:${ohN>0?'#16a34a':'var(--text3)'}`;
+  const ohVal=sp('pdm-real-val');
+  ohVal.textContent=' '+fmtN(ohN)+' buc'+(fullyOnHand?' ✓':'');
+  ohVal.style.cssText=`font-size:15px;font-weight:800;color:${fullyOnHand?'#16a34a':ohN>0?'#d97706':'var(--text3)'}`;
   ohStatD.appendChild(ohVal);infoWrap.appendChild(ohStatD);
-
-  // WIP — separate line
-  const wipStatD=dv('');
-  wipStatD.appendChild(sp('pdm-real-label','WIP (in lucru):'));
-  const wipN=Math.max(0,stockFP.totalWIP);
-  const wipVal=sp('');
-  wipVal.textContent=' '+fmtN(wipN)+' buc';
-  wipVal.style.cssText=`font-size:15px;font-weight:800;color:${wipN>0?'#92400e':'var(--text3)'}`;
-  wipStatD.appendChild(wipVal);infoWrap.appendChild(wipStatD);
   realBar.appendChild(infoWrap);
   const progWrap=dv('');progWrap.style.cssText='width:130px;display:flex;flex-direction:column;gap:4px;align-self:center;flex-shrink:0';
   const progBg=dv('');progBg.style.cssText='height:12px;background:#e5e7eb;border-radius:6px;overflow:hidden';
@@ -4873,8 +4868,8 @@ ${bodyHTML}
   const grpTotalAll=sortedGroups.reduce((s,g)=>s+g.sumTotal,0);
 
   // Recompute pct from groups (with 99.99% cap if FP not fully on hand)
-  let pctFinal=grpTotalAll>0?Math.min(100,(1-grpTotalRem/grpTotalAll)*100):0;
-  if(pctFinal>=100&&Math.max(0,stockFP.onHand)<qty) pctFinal=99.99;
+  let pctFinal=fullyOnHand?100:grpTotalAll>0?Math.min(99.99,(1-grpTotalRem/grpTotalAll)*100):0;
+  if(pctFinal>=100&&!fullyOnHand)pctFinal=99.99;
   const pctFinalDisplay=pctFinal===100?'100%':pctFinal.toFixed(2)+'%';
   const pctFinalColor=pctFinal===100?'#16a34a':pctFinal>=50?'#ca8a04':pctFinal>0?'#ea580c':'#dc2626';
 
@@ -4976,7 +4971,7 @@ ${bodyHTML}
           }
         }
         // Needing
-        if(comp.needing>0){
+        if(comp.needing>0&&!fullyOnHand){
           const needBadge=sp('','');needBadge.style.cssText='font-size:10px;color:#dc2626;font-weight:600';
           needBadge.textContent=`⚠ Mai trebuie: ${fmtN(comp.needing)} buc`;
           stockDetail.appendChild(needBadge);
