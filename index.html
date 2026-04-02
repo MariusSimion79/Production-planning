@@ -539,7 +539,41 @@ button { font-family: var(--sans); }
 .plan-eff-lbl{font-size:11px;color:var(--text3);white-space:nowrap}
 .plan-eff-inp{width:52px;height:25px;border:1px solid var(--border);border-radius:3px;padding:0 6px;font-size:13px;font-weight:600;color:#d97706;text-align:right;outline:none;background:#fff}
 .rep-page{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg)}
-/* ── SCANNER MODULE ── */
+/* ── PLAN DETAIL MODAL ── */
+.plan-modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:8000;display:flex;align-items:center;justify-content:center;padding:16px;backdrop-filter:blur(2px)}
+.plan-modal{background:#fff;border-radius:10px;width:100%;max-width:700px;max-height:88vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden}
+.plan-modal-hdr{display:flex;align-items:flex-start;justify-content:space-between;padding:16px 20px;border-bottom:1px solid var(--border);flex-shrink:0}
+.plan-modal-title{font-size:16px;font-weight:800;color:var(--text);font-family:Arial,monospace}
+.plan-modal-sub{font-size:11px;color:var(--text3);margin-top:2px}
+.plan-modal-close{width:28px;height:28px;border:none;background:#f1f5f9;border-radius:4px;font-size:16px;cursor:pointer;color:var(--text2);display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-left:10px}
+.plan-modal-close:hover{background:#fee2e2;color:#dc2626}
+.plan-modal-body{flex:1;overflow-y:auto;padding:16px 20px}
+/* Realizare summary bar */
+.pdm-real-bar{display:flex;align-items:center;gap:14px;padding:12px 16px;background:#f8fafc;border:1px solid var(--border);border-radius:8px;margin-bottom:16px;flex-wrap:wrap}
+.pdm-real-pct{font-size:34px;font-weight:900;font-family:Arial,monospace;line-height:1}
+.pdm-real-info{flex:1;min-width:120px}
+.pdm-real-label{font-size:9.5px;font-weight:700;color:var(--text3);letter-spacing:.07em;text-transform:uppercase;margin-bottom:2px}
+.pdm-real-val{font-size:13px;font-weight:600;color:var(--text)}
+/* WC table */
+.pdm-section-title{font-size:10px;font-weight:700;color:var(--text3);letter-spacing:.08em;text-transform:uppercase;margin:14px 0 7px;border-bottom:1px solid var(--border2);padding-bottom:4px}
+.pdm-wc-table{width:100%;border-collapse:collapse;font-size:12px}
+.pdm-wc-table th{background:#f8f9fb;border-bottom:2px solid var(--border);padding:5px 10px;font-size:9px;font-weight:700;color:var(--text3);letter-spacing:.07em;text-transform:uppercase;text-align:left;white-space:nowrap}
+.pdm-wc-table td{padding:5px 10px;border-bottom:1px solid var(--border2);vertical-align:middle}
+.pdm-wc-table tr:hover td{background:#f8f9fb}
+.pdm-bar-cell{width:140px}
+.pdm-bar-bg{height:10px;background:#e5e7eb;border-radius:5px;overflow:hidden}
+.pdm-bar-fill{height:100%;border-radius:5px}
+.pdm-bar-fill.ok{background:#16a34a}
+.pdm-bar-fill.warn{background:#d97706}
+.pdm-bar-fill.over{background:#dc2626}
+.pdm-num{font-family:Arial,monospace;font-size:12px}
+.pdm-num.rem{color:#7c3aed;font-weight:700}
+.pdm-done{color:#15803d;font-size:10px;font-style:italic}
+@media(max-width:600px){
+  .plan-modal{max-height:96vh;border-radius:8px 8px 0 0;align-self:flex-end}
+  .plan-modal-overlay{align-items:flex-end;padding:0}
+  .pdm-bar-cell{width:80px}
+}
 .scanner-page{flex:1;display:flex;flex-direction:column;overflow:hidden;background:#0f1624}
 .scanner-top{flex-shrink:0;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;height:45vw;max-height:320px;min-height:200px}
 .scanner-video{width:100%;height:100%;object-fit:cover;display:block}
@@ -3912,6 +3946,11 @@ function _buildPlanTbody(wrap){
     const price=getSalesPrice(itemNo,first);
     const valoare=price*plan.totalQty;
     const tr=el('tr');
+    tr.style.cursor='pointer';tr.title='Click pentru detalii operatii';
+    tr.addEventListener('click',e=>{
+      if(e.target.closest('.plan-del-btn')||e.target.closest('.plan-obs'))return;
+      showPlanDetail(itemNo,plan);
+    });
     visCols.forEach(colId=>{
       const td=el('td');td.style.width=(pf2.colWidths[colId]||120)+'px';td.style.overflow='hidden';td.style.boxSizing='border-box';
       if(colId==='itemNo'){td.appendChild(sp('stk-code',itemNo));}
@@ -4599,6 +4638,150 @@ function renderScanHistory(histWrap,resultArea){
     item.addEventListener('click',()=>showScanResult(h.code,resultArea,histWrap));
     histWrap.appendChild(item);
   });
+}
+
+function showPlanDetail(itemNo, plan){
+  // Remove any existing modal
+  document.getElementById('plan-detail-overlay')?.remove();
+
+  const eff=(S.eficientaPlan||100)/100;
+  const qty=plan.totalQty;
+  const needs=S.stockIdx?calcNeeds(itemNo,qty):null;
+  const execTime=calcExecTime(itemNo,qty,needs);
+  const totalExecTime=calcTotalExecTime(itemNo,qty);
+  const pct=totalExecTime.total>0?Math.round((1-execTime.total/totalExecTime.total)*100):0;
+  const pctColor=pct>=80?'#15803d':pct>=40?'#d97706':'#dc2626';
+  const first=plan.entries[0]||{};
+  const price=getSalesPrice(itemNo,first);
+
+  const overlay=dv('plan-modal-overlay');overlay.id='plan-detail-overlay';
+  overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove();});
+
+  const modal=dv('plan-modal');
+
+  // ── Header ──
+  const hdr=dv('plan-modal-hdr');
+  const hdrInfo=dv('');
+  hdrInfo.appendChild(sp('plan-modal-title',itemNo));
+  hdrInfo.appendChild(sp('plan-modal-sub',(first.itemName||'')+(price>0?` · ${price.toFixed(2)} EUR/buc`:'')+(` · ${qty.toLocaleString('ro-RO')} buc planificate`)));
+  const closeBtn=dv('plan-modal-close');closeBtn.textContent='✕';
+  closeBtn.addEventListener('click',()=>overlay.remove());
+  hdr.appendChild(hdrInfo);hdr.appendChild(closeBtn);
+  modal.appendChild(hdr);
+
+  // ── Body ──
+  const body=dv('plan-modal-body');
+
+  // % Realizare summary
+  const realBar=dv('pdm-real-bar');
+
+  const pctEl=sp('pdm-real-pct',pct+'%');pctEl.style.color=pctColor;
+  realBar.appendChild(pctEl);
+
+  const infoWrap=dv('pdm-real-info');
+  const addStat=(label,val)=>{
+    const d=dv('');d.style.marginBottom='4px';
+    d.appendChild(sp('pdm-real-label',label));
+    d.appendChild(sp('pdm-real-val',' '+val));
+    infoWrap.appendChild(d);
+  };
+  addStat('Timp ramas (cu eficienta '+S.eficientaPlan+'%):',fmtMin(execTime.total/eff));
+  addStat('Timp total (fara stoc):',fmtMin(totalExecTime.total/eff));
+  const stock=S.stockIdx?.get(itemNo)||{onHand:0,totalWIP:0};
+  const avail=Math.max(0,stock.onHand)+Math.max(0,stock.totalWIP);
+  addStat('Stoc disponibil (On Hand + WIP):',fmtN(avail)+' buc');
+  realBar.appendChild(infoWrap);
+
+  // Progress bar
+  const progWrap=dv('');progWrap.style.cssText='width:100%;display:flex;flex-direction:column;gap:4px;align-self:center;min-width:120px';
+  const progBg=dv('');progBg.style.cssText='height:8px;background:#e5e7eb;border-radius:4px;overflow:hidden';
+  const progFill=dv('');progFill.style.cssText=`height:100%;border-radius:4px;background:${pctColor};width:${pct}%;transition:width .5s`;
+  progBg.appendChild(progFill);progWrap.appendChild(progBg);
+  const progLbl=sp('','');progLbl.style.cssText='font-size:10px;color:var(--text3);text-align:right';
+  progLbl.textContent=`${pct}% realizat`;progWrap.appendChild(progLbl);
+  realBar.appendChild(progWrap);
+  body.appendChild(realBar);
+
+  // ── WC breakdown ──
+  if(execTime.byWC.size>0){
+    body.appendChild(sp('pdm-section-title','Timp ramas per Workcenter (ordonat dupa necesar)'));
+
+    const tbl=el('table','pdm-wc-table');
+    const thead=el('thead');const hr=el('tr');
+    ['Workcenter','Timp ramas','Run','Setup','Total fara stoc','Progres'].forEach(h=>{
+      const th=el('th');th.textContent=h;hr.appendChild(th);});
+    thead.appendChild(hr);tbl.appendChild(thead);
+
+    // Get total time per WC for progress bar normalization
+    const maxTotal=Math.max(...[...execTime.byWC.values()].map(v=>(v.runMin+v.setupMin)/eff));
+
+    const tbody=el('tbody');
+    // Sort by remaining time DESC
+    const sorted=[...execTime.byWC.entries()].sort((a,b)=>(b[1].runMin+b[1].setupMin)-(a[1].runMin+a[1].setupMin));
+    for(const [wc,t] of sorted){
+      const remMin=(t.runMin+t.setupMin)/eff;
+      const totalWcMin=(totalExecTime.byWC?.get(wc)||{runMin:0,setupMin:0});
+      const totalMin=(totalWcMin.runMin+totalWcMin.setupMin)/eff;
+      const wcPct=totalMin>0?Math.round((remMin/totalMin)*100):100;
+      const cls=wcPct<=40?'ok':wcPct<=80?'warn':'over';
+
+      const tr=el('tr');
+
+      // WC name
+      const tdWc=el('td');tdWc.style.fontWeight='600';tdWc.textContent=wc;tr.appendChild(tdWc);
+
+      // Remaining
+      const tdRem=el('td');tdRem.appendChild(sp('pdm-num rem',fmtMin(remMin)));tr.appendChild(tdRem);
+
+      // Run
+      const tdRun=el('td');tdRun.appendChild(sp('pdm-num',fmtMin(t.runMin/eff)));tr.appendChild(tdRun);
+
+      // Setup
+      const tdStp=el('td');tdStp.appendChild(sp('pdm-num',fmtMin(t.setupMin/eff)));tr.appendChild(tdStp);
+
+      // Total
+      const tdTot=el('td');tdTot.appendChild(sp('pdm-num',totalMin>0?fmtMin(totalMin):'—'));tr.appendChild(tdTot);
+
+      // Progress bar
+      const tdBar=el('td','pdm-bar-cell');
+      const barBg=dv('pdm-bar-bg');
+      const barFill=dv(`pdm-bar-fill ${cls}`);
+      const barPct=maxTotal>0?Math.round(remMin/maxTotal*100):0;
+      barFill.style.width=barPct+'%';
+      barBg.appendChild(barFill);
+      const barLbl=sp('','');barLbl.style.cssText='font-size:9px;color:var(--text3);margin-top:2px;display:block';
+      barLbl.textContent=wcPct+'% ramas';
+      tdBar.appendChild(barBg);tdBar.appendChild(barLbl);
+      tr.appendChild(tdBar);
+
+      tbody.appendChild(tr);
+    }
+    tbl.appendChild(tbody);body.appendChild(tbl);
+  } else if(!S.bowIdx){
+    const info=dv('');info.style.cssText='padding:14px;text-align:center;color:var(--text3);font-size:12px';
+    info.textContent='Incarca fisierul BOW pentru a vedea detaliile pe operatii.';body.appendChild(info);
+  } else {
+    body.appendChild(sp('pdm-done','Nu exista operatii BOW pentru acest produs.'));
+  }
+
+  // ── WC totals that are DONE (0 remaining) ──
+  if(totalExecTime.byWC?.size>0){
+    const doneWCs=[...totalExecTime.byWC.entries()].filter(([wc])=>!execTime.byWC.has(wc));
+    if(doneWCs.length>0){
+      body.appendChild(sp('pdm-section-title','Workcentere finalizate ✓'));
+      const doneWrap=dv('');doneWrap.style.cssText='display:flex;flex-wrap:wrap;gap:6px';
+      doneWCs.forEach(([wc,t])=>{
+        const pill=dv('');pill.style.cssText='background:#f0fdf4;border:1px solid #86efac;border-radius:4px;padding:4px 10px;font-size:11px;color:#15803d;font-weight:600';
+        pill.textContent=`✓ ${wc} (${fmtMin((t.runMin+t.setupMin)/eff)})`;
+        doneWrap.appendChild(pill);
+      });
+      body.appendChild(doneWrap);
+    }
+  }
+
+  modal.appendChild(body);
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
 }
 
 function mkEmpty(h,p,showLeg){
