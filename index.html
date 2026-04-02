@@ -1414,15 +1414,15 @@ function _calcNodeNeeds(fpCtx, compNo, parentNeed, needs){
 }
 
 /* ── EXECUTION TIME CALCULATION (WIP-AWARE) ──────────────────────────
-   Logic per component:
-   1. On Hand units → 0 time (already done)
-   2. WIP units at each workcenter → need remaining ops from that WC onwards
-      - Ops sorted by Ope seq DESC (highest = most advanced, fewest ops left)
-      - WIP at highest-seq WC processed first → fewest remaining operations
-      - Each WIP batch needs: current op + all ops with seq ABOVE their WC's highest seq
-   3. Fully unstarted units → need ALL operations
-
-   For time: run_time is per unit, setup_time is once per batch (per WC entry).
+   Correct algorithm per operation at index i:
+     pieces_needing_op_i = max(0, unitsNeeded
+                               - onHand               (fully done)
+                               - Σ WIP at seqIdx > i  (already past op i))
+   Setup counted ONCE per operation, run_time multiplied by pieces_needing.
+   This matches manual calculation:
+     Laser(i=0):        50 - 0(OH) - 5(WIP@Bend) - 1(WIP@Paint) = 44 pcs
+     Bending(i=1):      50 - 0(OH) - 1(WIP@Paint)               = 49 pcs
+     PowderPaint(i=2):  50 - 0(OH)                               = 50 pcs
 ────────────────────────────────────────────────────────────────────── */
 function calcExecTime(fpCode, inputQty, needs){
   const byWC = new Map(); // wcName → {runMin, setupMin}
@@ -1431,81 +1431,56 @@ function calcExecTime(fpCode, inputQty, needs){
     if(!byWC.has(wcName)) byWC.set(wcName,{runMin:0,setupMin:0});
     const e=byWC.get(wcName);
     e.runMin   += units * runT;
-    e.setupMin += setupT; // setup once per batch
+    e.setupMin += setupT;
   }
 
-  /* addOpsForComponent: calculate time for `unitsNeeded` of a given component,
-     accounting for WIP at various operation stages.
-     `wipByWC` is the WC→qty map from stock index.
-  */
   function addOpsForComponent(fpCtxCode, matNo, unitsNeeded){
     const rawOps = S.bowIdx?.get(`${fpCtxCode}__${matNo}`) || [];
     if(!rawOps.length) return;
 
-    // Parse and sort ops by Ope seq ASCENDING (seq order of execution)
     const ops = rawOps.map(op=>({
-      seq: parseFloat(String(op['Ope seq']||'0').replace(',','.')) || 0,
+      seq:    parseFloat(String(op['Ope seq']||'0').replace(',','.')) || 0,
       wcName: str(op['Ope name']||op['Ope descr']||'?'),
-      runT: parseFloat(String(op['Run time']||'0').replace(',','.')) || 0,
+      runT:   parseFloat(String(op['Run time']||'0').replace(',','.')) || 0,
       setupT: parseFloat(String(op['Setup time']||'0').replace(',','.')) || 0,
     })).sort((a,b)=>a.seq-b.seq);
 
-    // Get WIP breakdown for this component
-    const stock = S.stockIdx?.get(matNo) || {onHand:0,wipByWC:{}};
+    const stock  = S.stockIdx?.get(matNo) || {onHand:0,wipByWC:{}};
+    const onHand = Math.max(0, stock.onHand);
     const wipByWC = stock.wipByWC || {};
 
-    // Build WIP by WC: match Planning Overview WC column names to BOW Ope names
-    // PO cols: '710410-Turning' → wcLabel → 'Turning' must match BOW 'Ope name'
-    // For each WC name in WIP, find the HIGHEST Ope seq that uses it (most advanced stage)
-    const wipByOpIdx = new Map(); // wcName(BOW) → {qty, highestSeqIdx}
+    // Map: opIndex → qty of WIP pieces that are AT (or past) this op index
+    // WIP at seqIdx X means the piece has completed ops 0..X-1 and is currently at X
+    const wipAtIdx = new Map(); // opIndex → qty
     for(const [poCol, wipQty] of Object.entries(wipByWC)){
-      if(!wipQty || wipQty <= 0) continue;
-      const wcNamePO = wcLabel(poCol); // strip numeric prefix
-      // Find the op with the highest seq that matches this WC name
+      if(!wipQty || wipQty<=0) continue;
+      const wcNamePO = wcLabel(poCol).toLowerCase();
+      // Find the HIGHEST seq op matching this WC (most advanced stage)
       let bestIdx = -1;
       for(let i=ops.length-1;i>=0;i--){
-        if(ops[i].wcName.toLowerCase()===wcNamePO.toLowerCase()){bestIdx=i;break;}
+        if(ops[i].wcName.toLowerCase()===wcNamePO){bestIdx=i;break;}
       }
-      if(bestIdx<0) continue; // no BOW op matches this WIP WC
-      if(!wipByOpIdx.has(wcNamePO)||ops[bestIdx].seq>ops[wipByOpIdx.get(wcNamePO).seqIdx_seq]){
-        wipByOpIdx.set(wcNamePO,{qty:wipQty,seqIdx:bestIdx});
-      }
+      if(bestIdx<0) continue;
+      wipAtIdx.set(bestIdx,(wipAtIdx.get(bestIdx)||0)+wipQty);
     }
 
-    // Sort WIP entries by their op's seq DESC (most advanced = fewest remaining ops = process first)
-    const wipEntries = [...wipByOpIdx.entries()]
-      .map(([wc,v])=>({wc,qty:v.qty,seqIdx:v.seqIdx}))
-      .sort((a,b)=>ops[b.seqIdx].seq - ops[a.seqIdx].seq);
-
-    let remaining = Math.max(0, unitsNeeded - Math.max(0, stock.onHand));
-
-    // Process WIP batches from most advanced (highest seq) to least advanced
-    for(const wip of wipEntries){
-      if(remaining <= 0) break;
-      const take = Math.min(wip.qty, remaining);
-      if(take <= 0) continue;
-      // These `take` pieces need all ops from seqIdx onwards (inclusive)
-      for(let i=wip.seqIdx; i<ops.length; i++){
-        acc(ops[i].wcName, take, ops[i].runT, ops[i].setupT);
+    // For each operation i: pieces_needing = total - onHand - Σ WIP at seqIdx > i
+    for(let i=0; i<ops.length; i++){
+      let alreadyDone = onHand;
+      for(const [seqIdx, qty] of wipAtIdx){
+        if(seqIdx > i) alreadyDone += qty;
       }
-      remaining -= take;
-    }
-
-    // Fully unstarted pieces — need ALL operations
-    if(remaining > 0){
-      for(const op of ops){
-        acc(op.wcName, remaining, op.runT, op.setupT);
-      }
+      const needing = Math.max(0, unitsNeeded - alreadyDone);
+      if(needing > 0) acc(ops[i].wcName, needing, ops[i].runT, ops[i].setupT);
     }
   }
 
   // Process FP itself
   addOpsForComponent(fpCode, fpCode, inputQty);
 
-  // Process each component that appears in needs map
+  // Process each component
   if(needs){
     for(const [matNo, need] of needs){
-      // need.needed = total quantity needed, need.onHand = on hand (shown but use stock.onHand for wip)
       addOpsForComponent(fpCode, matNo, need.needed);
     }
   }
