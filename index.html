@@ -3990,6 +3990,8 @@ function _buildPlanTbody(wrap){
         const pi=el('input','plan-prio');pi.type='text';pi.maxLength=3;
         pi.placeholder='—';pi.value=S.planPrio[itemNo]||'';
         pi.title='Prioritate (ex: 1, 2, A, ...)';
+        pi.addEventListener('click',e=>e.stopPropagation());
+        pi.addEventListener('mousedown',e=>e.stopPropagation());
         pi.addEventListener('input',e=>{
           S.planPrio[itemNo]=e.target.value.trim();
           savePlan();
@@ -5123,8 +5125,20 @@ function exportPlanDetail(itemNo, plan, sortedGroups, pctDisplay, eff){
 function buildSubcomponenteData(){
   const rows=[];
   if(!S.planData.size||!S.bomIdx) return rows;
+  const eff=(S.eficientaPlan||100)/100;
 
-  for(const [itemNo,plan] of [...S.planData.entries()].sort((a,b)=>a[0].localeCompare(b[0]))){
+  // Sort plan entries by prio ascending (numeric first, then alpha, then empty last)
+  const sortedPlan=[...S.planData.entries()].sort((a,b)=>{
+    const pa=S.planPrio[a[0]]||'';
+    const pb=S.planPrio[b[0]]||'';
+    if(!pa&&!pb)return a[0].localeCompare(b[0]);
+    if(!pa)return 1;if(!pb)return -1;
+    const na=parseFloat(pa),nb=parseFloat(pb);
+    if(!isNaN(na)&&!isNaN(nb))return na-nb;
+    return pa.localeCompare(pb);
+  });
+
+  for(const [itemNo,plan] of sortedPlan){
     const prio=S.planPrio[itemNo]||'';
     const planQ=plan.totalQty;
     const needs=S.stockIdx?calcNeeds(itemNo,planQ):null;
@@ -5132,15 +5146,53 @@ function buildSubcomponenteData(){
 
     for(const [matNo,need] of [...needs.entries()].sort((a,b)=>a[0].localeCompare(b[0]))){
       const st=S.stockIdx?.get(matNo)||{onHand:0,totalWIP:0,type:'',name:'',wipByWC:{}};
-      // Collect WC operations for this component
+      // Collect operations from BOW for this component in this FP context
       const rawOps=S.bowIdx?.get(`${itemNo}__${matNo}`)||[];
-      const wcs=[...new Set(rawOps.map(op=>str(op['Ope name']||op['Ope descr']||'')).filter(Boolean))];
+      const ops=rawOps.map(op=>({
+        opNo:str(op['Operation no']||''),
+        opNoNum:parseFloat(str(op['Operation no']||'0'))||0,
+        wcName:str(op['Ope name']||op['Ope descr']||''),
+        runT:parseFloat(String(op['Run time']||'0').replace(',','.'))||0,
+        setupT:parseFloat(String(op['Setup time']||'0').replace(',','.'))||0,
+        seq:parseFloat(String(op['Ope seq']||'0').replace(',','.'))||0,
+      })).sort((a,b)=>a.seq-b.seq);
+      const wcs=[...new Set(ops.map(o=>o.wcName).filter(Boolean))];
+
+      // Per-WC exec time (qty to process = need.needed, no further WIP split for simplicity)
+      const wcTimes={}; // wcName → {runMin, setupMin, qtyNeeded, totalMin}
+      // Use the same WIP-aware logic
+      const onHand=Math.max(0,st.onHand);
+      const wipByWC=st.wipByWC||{};
+      const wipAtIdx=new Map();
+      for(const [poCol,wipQty] of Object.entries(wipByWC)){
+        if(!wipQty||wipQty<=0)continue;
+        const wcNamePO=wcLabel(poCol).toLowerCase();
+        let bestIdx=-1;
+        for(let i=ops.length-1;i>=0;i--){if(ops[i].wcName.toLowerCase()===wcNamePO){bestIdx=i;break;}}
+        if(bestIdx<0)continue;
+        wipAtIdx.set(bestIdx,(wipAtIdx.get(bestIdx)||0)+wipQty);
+      }
+      for(let i=0;i<ops.length;i++){
+        const op=ops[i];
+        let alreadyDone=onHand;
+        for(const [seqIdx,wq] of wipAtIdx){if(seqIdx>i)alreadyDone+=wq;}
+        const needing=Math.max(0,need.needed-alreadyDone);
+        if(needing<=0)continue;
+        const runMin=(needing*op.runT)/eff;
+        const setupMin=op.setupT/eff;
+        if(!wcTimes[op.wcName])wcTimes[op.wcName]={runMin:0,setupMin:0,qtyNeeded:needing,totalMin:0,opNo:op.opNo};
+        wcTimes[op.wcName].runMin+=runMin;
+        wcTimes[op.wcName].setupMin+=setupMin;
+        wcTimes[op.wcName].totalMin+=runMin+setupMin;
+        wcTimes[op.wcName].qtyNeeded=Math.max(wcTimes[op.wcName].qtyNeeded,needing);
+      }
+
       rows.push({
         prio,itemNo,planQ,
         matNo,matName:st.name||'',matType:st.type||'',
         needed:need.needed,onHand:st.onHand,totalWIP:Math.max(0,st.totalWIP),
         net:need.net,
-        wcs,
+        wcs,wcTimes,
       });
     }
   }
@@ -5156,13 +5208,14 @@ function renderSubcomponentePanel(container){
   // State
   const f={q:'',wcFilter:null,onlyNeeded:false,zoom:100,
     colFilters:{},
-    colOrder:['prio','itemNo','matNo','matName','matType','needed','onHand','totalWIP','net','wcs'],
-    colWidths:{prio:55,itemNo:140,matNo:140,matName:220,matType:50,needed:90,onHand:90,totalWIP:90,net:90,wcs:220},
-    visibleCols:new Set(['prio','itemNo','matNo','matName','matType','needed','onHand','totalWIP','net','wcs']),
+    colOrder:['prio','itemNo','matNo','matName','matType','needed','onHand','totalWIP','net','wcQty','wcTime','wcs'],
+    colWidths:{prio:55,itemNo:140,matNo:140,matName:220,matType:50,needed:85,onHand:85,totalWIP:75,net:85,wcQty:90,wcTime:100,wcs:180},
+    visibleCols:new Set(['prio','itemNo','matNo','matName','matType','needed','onHand','net','wcQty','wcTime','wcs']),
   };
   const LABELS={prio:'Prio',itemNo:'Produs Final',matNo:'Cod Material',matName:'Denumire',matType:'Tip',
-    needed:'Necesar',onHand:'On Hand',totalWIP:'WIP',net:'Necesar net',wcs:'Workcentere'};
-  const NUMERIC=new Set(['needed','onHand','totalWIP','net']);
+    needed:'Necesar',onHand:'On Hand',totalWIP:'WIP',net:'Necesar net',
+    wcQty:'Cant. WC',wcTime:'Timp WC',wcs:'Workcentere'};
+  const NUMERIC=new Set(['needed','onHand','totalWIP','net','wcQty','wcTime']);
 
   // Collect all WCs for filter buttons
   const allData=buildSubcomponenteData();
@@ -5180,23 +5233,32 @@ function renderSubcomponentePanel(container){
   tb.appendChild(onlyBtn);
 
   // WC filter dropdown
+  const wcLabel2=dv('');wcLabel2.id='sub-wc-label';wcLabel2.style.cssText='font-size:11px;font-weight:600;color:var(--accent);display:none;padding:0 6px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:3px';
   const wcDropBtn=el('button','tbtn');wcDropBtn.textContent='🔧 Workcenter';
   wcDropBtn.addEventListener('click',e=>{
     e.stopPropagation();
     const ex=document.getElementById('sub-wc-picker');if(ex){ex.remove();return;}
     const picker=dv('ob-col-picker');picker.id='sub-wc-picker';
-    const allItem=dv('ob-col-item');
-    const allCb=el('input');allCb.type='checkbox';allCb.checked=!f.wcFilter;
-    allCb.addEventListener('change',()=>{f.wcFilter=null;picker.remove();rebuild();});
-    allItem.appendChild(allCb);allItem.appendChild(document.createTextNode('Toate'));picker.appendChild(allItem);
+    const setWC=(wc)=>{
+      f.wcFilter=wc;picker.remove();
+      wcDropBtn.textContent=wc?`🔧 ${wc}`:'🔧 Workcenter';
+      wcDropBtn.style.cssText=wc?'border-color:var(--accent);color:var(--accent);font-weight:600':'';
+      // Update column header labels
+      LABELS.wcQty=wc?`Cant. (${wc})`:'Cant. WC';
+      LABELS.wcTime=wc?`Timp (${wc})`:'Timp WC';
+      rebuild();
+    };
+    const allItem=dv('ob-col-item');const allCb=el('input');allCb.type='checkbox';allCb.checked=!f.wcFilter;
+    allCb.addEventListener('change',()=>setWC(null));
+    allItem.appendChild(allCb);allItem.appendChild(document.createTextNode('Toate workcentrele'));picker.appendChild(allItem);
     allWCs.forEach(wc=>{
       const item=dv('ob-col-item');const cb=el('input');cb.type='checkbox';cb.checked=f.wcFilter===wc;
-      cb.addEventListener('change',()=>{f.wcFilter=wc;picker.remove();rebuild();});
+      cb.addEventListener('change',()=>setWC(wc));
       item.appendChild(cb);item.appendChild(document.createTextNode(wc));picker.appendChild(item);
     });
     document.body.appendChild(picker);
-    const r=wcDropBtn.getBoundingClientRect();picker.style.cssText+=`;top:${r.bottom+2}px;left:${r.left}px;`;
-    setTimeout(()=>document.addEventListener('click',function h(){picker.remove();document.removeEventListener('click',h);}),50);
+    const r=wcDropBtn.getBoundingClientRect();picker.style.cssText+=`;top:${r.bottom+2}px;left:${r.left}px;max-height:300px;overflow-y:auto`;
+    setTimeout(()=>document.addEventListener('click',function h(e){if(!picker.contains(e.target)){picker.remove();document.removeEventListener('click',h);};}),50);
   });
   tb.appendChild(wcDropBtn);
 
@@ -5227,12 +5289,17 @@ function renderSubcomponentePanel(container){
   expBtn.addEventListener('click',()=>{
     const rows=getFilteredRows();
     if(!rows.length){alert('Nicio data de exportat.');return;}
-    const out=rows.map(r=>({
-      'Prio':r.prio,'Produs Final':r.itemNo,'Cant. plan':r.planQ,
-      'Cod Material':r.matNo,'Denumire':r.matName,'Tip':r.matType,
-      'Necesar':r.needed,'On Hand':r.onHand,'WIP':r.totalWIP,'Net':r.net,
-      'Workcentere':r.wcs.join(', '),
-    }));
+    const out=rows.map(r=>{
+      const wcData=f.wcFilter&&r.wcTimes[f.wcFilter]?r.wcTimes[f.wcFilter]:null;
+      return {
+        'Prio':r.prio,'Produs Final':r.itemNo,'Cant. plan':r.planQ,
+        'Cod Material':r.matNo,'Denumire':r.matName,'Tip':r.matType,
+        'Necesar':r.needed,'On Hand':r.onHand,'WIP':r.totalWIP,'Net':r.net,
+        ...(f.wcFilter?{[`Cant. ${f.wcFilter}`]:wcData?+wcData.qtyNeeded.toFixed(1):0,
+          [`Timp ${f.wcFilter} (min)`]:wcData?+wcData.totalMin.toFixed(2):0}:{}),
+        'Workcentere':r.wcs.join(', '),
+      };
+    });
     const wb=XLSX.utils.book_new();
     const ws=XLSX.utils.json_to_sheet(out);
     ws['!cols']=[{wch:6},{wch:18},{wch:10},{wch:18},{wch:28},{wch:6},{wch:10},{wch:10},{wch:10},{wch:10},{wch:40}];
@@ -5263,7 +5330,7 @@ function renderSubcomponentePanel(container){
     return allData.filter(r=>{
       if(q&&!r.itemNo.toLowerCase().includes(q)&&!r.matNo.toLowerCase().includes(q)&&!r.matName.toLowerCase().includes(q))return false;
       if(f.onlyNeeded&&r.net<=0)return false;
-      if(f.wcFilter&&!r.wcs.includes(f.wcFilter))return false;
+      if(f.wcFilter&&(!r.wcTimes[f.wcFilter]||r.wcTimes[f.wcFilter].qtyNeeded<=0))return false;
       // col filters
       const cf=f.colFilters;
       if(cf.prio&&!(r.prio||'').toLowerCase().includes(cf.prio.toLowerCase()))return false;
@@ -5367,6 +5434,26 @@ function renderSubcomponentePanel(container){
           const cls=r.matType==='M'?'stk-type-m':r.matType==='P'?'stk-type-b':'stk-type-d';
           if(r.matType)td.appendChild(sp(cls,r.matType));
         }
+        else if(colId==='wcQty'){
+          // Qty to process at selected WC (or total if no WC filter)
+          if(f.wcFilter&&r.wcTimes[f.wcFilter]){
+            const q=r.wcTimes[f.wcFilter].qtyNeeded;
+            const s=sp('pdm-num',fmtN(q));s.style.cssText='display:block;text-align:right;color:#1e40af;font-weight:700';td.appendChild(s);
+          } else if(!f.wcFilter){
+            const s=sp('pdm-num',fmtN(r.net));s.style.cssText='display:block;text-align:right';td.appendChild(s);
+          } else {td.textContent='—';}
+        }
+        else if(colId==='wcTime'){
+          if(f.wcFilter&&r.wcTimes[f.wcFilter]){
+            const t=r.wcTimes[f.wcFilter];
+            const s=sp('pdm-num',fmtMin(t.totalMin));s.style.cssText='display:block;text-align:right;color:#7c3aed;font-weight:700';td.appendChild(s);
+            if(t.setupMin>0){const sub=sp('',` (setup: ${fmtMin(t.setupMin)})`);sub.style.cssText='font-size:9.5px;color:var(--text3)';td.appendChild(sub);}
+          } else if(!f.wcFilter){
+            // Show total exec time across all WCs
+            const totalMin=Object.values(r.wcTimes).reduce((s,v)=>s+v.totalMin,0);
+            const s=sp('pdm-num',totalMin>0?fmtMin(totalMin):'—');s.style.cssText='display:block;text-align:right;color:#7c3aed';td.appendChild(s);
+          } else {td.textContent='—';}
+        }
         else if(NUMERIC.has(colId)){
           const v=r[colId];
           const s=sp('pdm-num',fmtN(v));
@@ -5377,7 +5464,11 @@ function renderSubcomponentePanel(container){
         }
         else if(colId==='wcs'){
           const wrap2=dv('');wrap2.style.cssText='display:flex;flex-wrap:wrap;gap:3px';
-          r.wcs.slice(0,4).forEach(wc=>{const p=sp('stk-wip-pill',wc);wrap2.appendChild(p);});
+          r.wcs.slice(0,4).forEach(wc=>{
+            const p=sp('stk-wip-pill',wc);
+            if(f.wcFilter&&wc===f.wcFilter)p.style.cssText='background:#dbeafe;border-color:#93c5fd;color:#1e40af;font-size:9px;font-family:Arial,monospace;padding:0 4px;border-radius:2px;border:1px solid;font-weight:700';
+            wrap2.appendChild(p);
+          });
           if(r.wcs.length>4){const m=sp('stk-fp-more',`+${r.wcs.length-4}`);wrap2.appendChild(m);}
           td.appendChild(wrap2);
         }
