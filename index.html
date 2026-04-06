@@ -860,7 +860,7 @@ const S={
   exp:new Set(),expOps:new Set(),
   qtyInput:1,
   efficienta:100,
-  stockFilter:{q:'',type:'all',onlyWip:false,onlyZero:false,sortCol:'fp',sortDir:1,
+  stockFilter:{q:'',type:'all',onlyWip:false,onlyZero:false,onlyNeg:false,sortCol:'fp',sortDir:1,
     colOrder:['fp','code','name','type','oh','mo','wip','wc'],
     colWidths:{fp:155,code:145,name:240,type:55,oh:90,mo:90,wip:90,wc:220},
     visibleCols:new Set(['fp','code','name','type','oh','mo','wip','wc']),
@@ -2446,6 +2446,13 @@ function renderStocuriTab(){
   });
   toolbar.appendChild(zeroToggle);
 
+  const negToggle=el('button',`stk-toggle${f.onlyNeg?' on':''}`);negToggle.textContent='🔴 Stocuri negative';
+  negToggle.addEventListener('click',()=>{
+    S.stockFilter.onlyNeg=!S.stockFilter.onlyNeg;
+    negToggle.className=`stk-toggle${S.stockFilter.onlyNeg?' on':''}`;rebuildTable();
+  });
+  toolbar.appendChild(negToggle);
+
   const countEl=sp('stk-count','');countEl.id='stk-count';toolbar.appendChild(countEl);
 
   /* Column picker */
@@ -2551,6 +2558,7 @@ function getFilteredStock(){
     if(f.type!=='all'&&st.type!==f.type)return false;
     if(f.onlyWip&&st.totalWIP<=0)return false;
     if(f.onlyZero&&st.onHand>0)return false;
+    if(f.onlyNeg&&st.onHand>=0)return false;
     // Per-column filters
     if(cf.fp){const v=cf.fp.toLowerCase();if(![...(st.fps||[])].some(fp=>fp.toLowerCase().includes(v)))return false;}
     if(cf.code&&!code.toLowerCase().includes(cf.code.toLowerCase()))return false;
