@@ -516,6 +516,26 @@ button { font-family: var(--sans); }
 .plan-pct-btn.active{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:700}
 .plan-obs{width:100%;border:1px solid transparent;border-radius:2px;padding:2px 4px;font-size:11.5px;background:transparent;resize:none;outline:none;font-family:Arial,sans-serif;color:var(--text);min-height:20px;transition:border .15s}
 .plan-obs:focus{border-color:var(--accent);background:#fff}
+.plan-prio{width:100%;height:28px;border:1.5px solid transparent;border-radius:3px;padding:0 6px;font-size:13px;font-weight:700;font-family:Arial,monospace;text-align:center;background:transparent;outline:none;transition:border .15s;color:var(--text)}
+.plan-prio:focus{border-color:#f59e0b;background:#fef9c3}
+.plan-prio:not(:placeholder-shown){background:#fef9c3;border-color:#fde047;color:#92400e}
+/* Subcomponent report */
+.sub-rep-toolbar{display:flex;align-items:center;gap:8px;padding:9px 14px;background:#fff;border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap}
+.sub-rep-wrap{flex:1;overflow:auto}
+.sub-rep-table{width:max-content;min-width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}
+.sub-rep-table thead{position:sticky;top:0;z-index:4}
+.sub-rep-table th{background:#f8f9fb;border-bottom:2px solid var(--border);border-right:1px solid var(--border2);padding:0;height:34px;white-space:nowrap;user-select:none;position:relative;overflow:hidden;box-sizing:border-box}
+.sub-rep-table td{padding:5px 10px;border-bottom:1px solid var(--border2);border-right:1px solid var(--border2);vertical-align:middle;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sub-rep-table tr:hover td{background:#f8f9fb}
+.sub-rep-th-inner{display:flex;align-items:center;height:100%;padding:0 8px;gap:4px;cursor:pointer}
+.sub-rep-th-inner:hover{background:rgba(30,64,175,.06)}
+.sub-rep-filter-row th{background:#fff;border-bottom:1px solid var(--border);padding:3px 5px;position:sticky;top:34px;z-index:3}
+.sub-rep-col-filter{width:100%;height:22px;border:1px solid var(--border2);border-radius:2px;padding:0 5px;font-size:11px;outline:none;background:var(--surface2)}
+.sub-rep-col-filter:focus{border-color:var(--accent);background:#fff}
+.sub-rep-wc-btn{height:26px;padding:0 9px;border:1px solid var(--border);border-radius:3px;background:#fff;font-size:11px;cursor:pointer;color:var(--text2);transition:all .12s;white-space:nowrap}
+.sub-rep-wc-btn:hover{border-color:var(--accent);color:var(--accent)}
+.sub-rep-wc-btn.active{background:var(--accent);color:#fff;border-color:var(--accent);font-weight:700}
+.plan-obs:focus{border-color:var(--accent);background:#fff}
 .plan-valoare{font-family:Arial,monospace;font-size:12px;font-weight:700;color:#7c3aed;text-align:right;display:block}
 .plan-table td{padding:5px 10px;border-bottom:1px solid var(--border2);border-right:1px solid var(--border2);vertical-align:middle;white-space:nowrap}
 .plan-table tr:hover td{background:#f8f9fb}
@@ -881,12 +901,13 @@ const S={
   wcAvailHours:{},   // wcName -> hours/week (user input, persisted)   // % efficiency for plan execution time calc
   planData:new Map(),
   planObs:{},
+  planPrio:{},  // itemNo → priority string (persisted)
   planFilter:{
     colFilters:{},
     realizarePct:'all',
-    colOrder:['itemNo','itemName','customer','qty','valoare','realizare','obs','_del'],
-    colWidths:{itemNo:140,itemName:200,customer:200,qty:110,valoare:120,realizare:140,obs:200,_del:80},
-    visibleCols:new Set(['itemNo','itemName','customer','qty','valoare','realizare','obs','_del']),
+    colOrder:['prio','itemNo','itemName','customer','qty','valoare','realizare','obs','_del'],
+    colWidths:{prio:60,itemNo:140,itemName:200,customer:200,qty:110,valoare:120,realizare:140,obs:200,_del:80},
+    visibleCols:new Set(['prio','itemNo','itemName','customer','qty','valoare','realizare','obs','_del']),
   },
   meta:{bom:{rows:0,ts:null},bow:{rows:0,ts:null},po:{rows:0,ts:null},ob:{rows:0,ts:null}},
   loading:false,loadMsg:'Se incarca datele salvate...'
@@ -1082,7 +1103,7 @@ async function sbLoadAllData(){
 
 async function sbSavePlan(){
   const cfg=S.sbCfg;if(!cfg)return;
-  await sbUpload(cfg,'data-plan.json',{entries:[...S.planData.entries()],obs:S.planObs,wcAvailHours:S.wcAvailHours});
+  await sbUpload(cfg,'data-plan.json',{entries:[...S.planData.entries()],obs:S.planObs,wcAvailHours:S.wcAvailHours,prio:S.planPrio});
 }
 
 /* ── XLSX (only used on fresh upload, not on DB restore) ── */
@@ -1264,6 +1285,7 @@ async function loadFromIndexedDB(){
     S.planData=new Map(plane.entries);
     if(plane.obs)S.planObs=plane.obs;
     if(plane.wcAvailHours)S.wcAvailHours=plane.wcAvailHours;
+      if(plane.prio)S.planPrio=plane.prio;
   }
 }
 
@@ -3315,28 +3337,23 @@ function exportNecExcel(){
 
 function renderRapoarte(){
   const page=dv('rep-page');
-
-  // ── Report selector bar ──
   const sel=dv('rep-selector');
   sel.appendChild(sp('rep-sel-title','Raport:'));
-
   const panel=dv('');panel.style.cssText='flex:1;display:flex;flex-direction:column;overflow:hidden';
 
   const necBtn=el('button','rep-btn active');necBtn.textContent='📋 Necesar materii prime';
   const wcBtn=el('button','rep-btn');wcBtn.textContent='⚙ Incarcare Workcentere';
+  const subBtn=el('button','rep-btn');subBtn.textContent='🔩 Subcomponente Plan';
 
-  necBtn.addEventListener('click',()=>{
-    necBtn.className='rep-btn active';wcBtn.className='rep-btn';
-    renderNecesarPanel(panel);
-  });
-  wcBtn.addEventListener('click',()=>{
-    wcBtn.className='rep-btn active';necBtn.className='rep-btn';
-    renderWcLoadPanel(panel);
-  });
+  const allBtns=[necBtn,wcBtn,subBtn];
+  const activate=(btn,fn)=>{allBtns.forEach(b=>b.className='rep-btn');btn.className='rep-btn active';fn(panel);};
 
-  sel.appendChild(necBtn);sel.appendChild(wcBtn);
-  page.appendChild(sel);
-  page.appendChild(panel);
+  necBtn.addEventListener('click',()=>activate(necBtn,renderNecesarPanel));
+  wcBtn.addEventListener('click',()=>activate(wcBtn,renderWcLoadPanel));
+  subBtn.addEventListener('click',()=>activate(subBtn,renderSubcomponentePanel));
+
+  sel.appendChild(necBtn);sel.appendChild(wcBtn);sel.appendChild(subBtn);
+  page.appendChild(sel);page.appendChild(panel);
   renderNecesarPanel(panel);
   return page;
 }
@@ -3633,7 +3650,7 @@ function showToast(msg,type='ok',dur=2500){
 }
 
 async function savePlan(){
-  await dbSave('plan',{entries:[...S.planData.entries()],obs:S.planObs,wcAvailHours:S.wcAvailHours});
+  await dbSave('plan',{entries:[...S.planData.entries()],obs:S.planObs,wcAvailHours:S.wcAvailHours,prio:S.planPrio});
   if(S.sbCfg&&S.session){
     sbSavePlan()
       .then(()=>showToast('✓ Plan sincronizat'))
@@ -3795,7 +3812,7 @@ function renderPlanificare(){
     const existingPicker=document.getElementById('plan-col-picker');
     if(existingPicker){existingPicker.remove();return;}
     const picker=dv('ob-col-picker');picker.id='plan-col-picker';
-    const COL_LABELS_PICK={itemNo:'Item no',itemName:'Denumire',customer:'Client',qty:'Cantitate',valoare:'Valoare EUR',realizare:'% Realizare',obs:'Observatii',_del:'Sterge'};
+    const COL_LABELS_PICK={prio:'Prio',itemNo:'Item no',itemName:'Denumire',customer:'Client',qty:'Cantitate',valoare:'Valoare EUR',realizare:'% Realizare',obs:'Observatii',_del:'Sterge'};
     S.planFilter.colOrder.forEach(cid=>{
       const item=dv('ob-col-item');
       const cb=el('input');cb.type='checkbox';cb.checked=S.planFilter.visibleCols.has(cid);
@@ -3915,7 +3932,7 @@ function getPlanRows(){
     .filter(([itemNo,plan])=>{
       const first=plan.entries[0]||{};
       const customer=[...new Set(plan.entries.map(e=>e.customer).filter(Boolean))].join(', ');
-      if(pf.itemNo&&!itemNo.toLowerCase().includes(pf.itemNo.toLowerCase()))return false;
+      if(pf.prio&&!(S.planPrio[itemNo]||'').toLowerCase().includes(pf.prio.toLowerCase()))return false;
       if(pf.itemName&&!(first.itemName||'').toLowerCase().includes(pf.itemName.toLowerCase()))return false;
       if(pf.customer&&!customer.toLowerCase().includes(pf.customer.toLowerCase()))return false;
       if(pf.qty){const n=parseFloat(pf.qty);if(!isNaN(n)&&plan.totalQty!==n)return false;}
@@ -3969,7 +3986,17 @@ function _buildPlanTbody(wrap){
     });
     visCols.forEach(colId=>{
       const td=el('td');td.style.width=(pf2.colWidths[colId]||120)+'px';td.style.overflow='hidden';td.style.boxSizing='border-box';
-      if(colId==='itemNo'){td.appendChild(sp('stk-code',itemNo));}
+      if(colId==='prio'){
+        const pi=el('input','plan-prio');pi.type='text';pi.maxLength=3;
+        pi.placeholder='—';pi.value=S.planPrio[itemNo]||'';
+        pi.title='Prioritate (ex: 1, 2, A, ...)';
+        pi.addEventListener('input',e=>{
+          S.planPrio[itemNo]=e.target.value.trim();
+          savePlan();
+        });
+        td.appendChild(pi);
+      }
+      else if(colId==='itemNo'){td.appendChild(sp('stk-code',itemNo));}
       else if(colId==='itemName'){td.textContent=first.itemName||'—';}
       else if(colId==='customer'){td.textContent=customer||'—';}
       else if(colId==='qty'){const s=sp('plan-num',plan.totalQty.toLocaleString('ro-RO')+' buc');s.style.cssText='font-weight:700;color:#15803d;display:block;text-align:right';td.appendChild(s);}
@@ -4038,8 +4065,8 @@ function renderPlanPage(wrap){
 
   const pf2=S.planFilter;
   const visCols=pf2.colOrder.filter(c=>pf2.visibleCols.has(c));
-  const COL_LABELS={itemNo:'Item no',itemName:'Denumire',customer:'Client',qty:'Cantitate',valoare:'Valoare EUR',realizare:'% Realizare',obs:'Observatii',_del:''};
-  const FILTERABLE=new Set(['itemNo','itemName','customer','qty','obs']);
+  const COL_LABELS={prio:'Prio',itemNo:'Item no',itemName:'Denumire',customer:'Client',qty:'Cantitate',valoare:'Valoare EUR',realizare:'% Realizare',obs:'Observatii',_del:''};
+  const FILTERABLE=new Set(['prio','itemNo','itemName','customer','qty','obs']);
 
   // Summary bar
   const sum=dv('plan-summary');sum.className='plan-summary';
@@ -5086,6 +5113,287 @@ function exportPlanDetail(itemNo, plan, sortedGroups, pctDisplay, eff){
   if(ws.A3){ws.A3.v='Op no';ws.B3.v='Workcenter';ws.C3.v='Total (min)';ws.D3.v='Ramas (min)';ws.E3.v='% Realizat';ws.F3.v='Status';}
   XLSX.utils.book_append_sheet(wb,ws,'Detaliu '+itemNo.substring(0,20));
   XLSX.writeFile(wb,`Detaliu_${itemNo}_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   RAPORT SUBCOMPONENTE PLAN
+   For each FP in plan, collect all BOM components with:
+   needed qty, on hand, WIP, net, workcenter operations
+═══════════════════════════════════════════════════════════════ */
+function buildSubcomponenteData(){
+  const rows=[];
+  if(!S.planData.size||!S.bomIdx) return rows;
+
+  for(const [itemNo,plan] of [...S.planData.entries()].sort((a,b)=>a[0].localeCompare(b[0]))){
+    const prio=S.planPrio[itemNo]||'';
+    const planQ=plan.totalQty;
+    const needs=S.stockIdx?calcNeeds(itemNo,planQ):null;
+    if(!needs) continue;
+
+    for(const [matNo,need] of [...needs.entries()].sort((a,b)=>a[0].localeCompare(b[0]))){
+      const st=S.stockIdx?.get(matNo)||{onHand:0,totalWIP:0,type:'',name:'',wipByWC:{}};
+      // Collect WC operations for this component
+      const rawOps=S.bowIdx?.get(`${itemNo}__${matNo}`)||[];
+      const wcs=[...new Set(rawOps.map(op=>str(op['Ope name']||op['Ope descr']||'')).filter(Boolean))];
+      rows.push({
+        prio,itemNo,planQ,
+        matNo,matName:st.name||'',matType:st.type||'',
+        needed:need.needed,onHand:st.onHand,totalWIP:Math.max(0,st.totalWIP),
+        net:need.net,
+        wcs,
+      });
+    }
+  }
+  return rows;
+}
+
+function renderSubcomponentePanel(container){
+  container.innerHTML='';
+
+  if(!S.planData.size){container.appendChild(mkEmpty('Subcomponente Plan','Adaugati produse in Planificare.'));return;}
+  if(!S.bomIdx){container.appendChild(mkEmpty('Subcomponente Plan','Incarcati fisierul BOM.'));return;}
+
+  // State
+  const f={q:'',wcFilter:null,onlyNeeded:false,zoom:100,
+    colFilters:{},
+    colOrder:['prio','itemNo','matNo','matName','matType','needed','onHand','totalWIP','net','wcs'],
+    colWidths:{prio:55,itemNo:140,matNo:140,matName:220,matType:50,needed:90,onHand:90,totalWIP:90,net:90,wcs:220},
+    visibleCols:new Set(['prio','itemNo','matNo','matName','matType','needed','onHand','totalWIP','net','wcs']),
+  };
+  const LABELS={prio:'Prio',itemNo:'Produs Final',matNo:'Cod Material',matName:'Denumire',matType:'Tip',
+    needed:'Necesar',onHand:'On Hand',totalWIP:'WIP',net:'Necesar net',wcs:'Workcentere'};
+  const NUMERIC=new Set(['needed','onHand','totalWIP','net']);
+
+  // Collect all WCs for filter buttons
+  const allData=buildSubcomponenteData();
+  const allWCs=[...new Set(allData.flatMap(r=>r.wcs))].sort();
+
+  // ── Toolbar ──
+  const tb=dv('sub-rep-toolbar');
+
+  const si=el('input','stk-search');si.placeholder='Cauta cod, denumire...';
+  si.addEventListener('input',e=>{f.q=e.target.value;rebuild();});
+  tb.appendChild(si);
+
+  const onlyBtn=el('button',`stk-toggle`);onlyBtn.textContent='⚠ Doar necesare';
+  onlyBtn.addEventListener('click',()=>{f.onlyNeeded=!f.onlyNeeded;onlyBtn.className=`stk-toggle${f.onlyNeeded?' on':''}`;rebuild();});
+  tb.appendChild(onlyBtn);
+
+  // WC filter dropdown
+  const wcDropBtn=el('button','tbtn');wcDropBtn.textContent='🔧 Workcenter';
+  wcDropBtn.addEventListener('click',e=>{
+    e.stopPropagation();
+    const ex=document.getElementById('sub-wc-picker');if(ex){ex.remove();return;}
+    const picker=dv('ob-col-picker');picker.id='sub-wc-picker';
+    const allItem=dv('ob-col-item');
+    const allCb=el('input');allCb.type='checkbox';allCb.checked=!f.wcFilter;
+    allCb.addEventListener('change',()=>{f.wcFilter=null;picker.remove();rebuild();});
+    allItem.appendChild(allCb);allItem.appendChild(document.createTextNode('Toate'));picker.appendChild(allItem);
+    allWCs.forEach(wc=>{
+      const item=dv('ob-col-item');const cb=el('input');cb.type='checkbox';cb.checked=f.wcFilter===wc;
+      cb.addEventListener('change',()=>{f.wcFilter=wc;picker.remove();rebuild();});
+      item.appendChild(cb);item.appendChild(document.createTextNode(wc));picker.appendChild(item);
+    });
+    document.body.appendChild(picker);
+    const r=wcDropBtn.getBoundingClientRect();picker.style.cssText+=`;top:${r.bottom+2}px;left:${r.left}px;`;
+    setTimeout(()=>document.addEventListener('click',function h(){picker.remove();document.removeEventListener('click',h);}),50);
+  });
+  tb.appendChild(wcDropBtn);
+
+  // Column picker
+  const colBtn=el('button','tbtn');colBtn.textContent='⚙ Coloane';
+  colBtn.addEventListener('click',e=>{
+    e.stopPropagation();
+    const ex=document.getElementById('sub-col-picker');if(ex){ex.remove();return;}
+    const picker=dv('ob-col-picker');picker.id='sub-col-picker';
+    f.colOrder.forEach(cid=>{
+      const item=dv('ob-col-item');const cb=el('input');cb.type='checkbox';cb.checked=f.visibleCols.has(cid);
+      cb.addEventListener('change',()=>{if(cb.checked)f.visibleCols.add(cid);else f.visibleCols.delete(cid);rebuild();});
+      item.appendChild(cb);item.appendChild(document.createTextNode(LABELS[cid]||cid));picker.appendChild(item);
+    });
+    document.body.appendChild(picker);
+    const r=colBtn.getBoundingClientRect();picker.style.cssText+=`;top:${r.bottom+2}px;left:${r.left}px;`;
+    setTimeout(()=>document.addEventListener('click',function h(){picker.remove();document.removeEventListener('click',h);}),50);
+  });
+  tb.appendChild(colBtn);
+
+  // Print
+  const printBtn=el('button','tbtn');printBtn.textContent='🖨 Printeaza';
+  printBtn.addEventListener('click',()=>window.print());
+  tb.appendChild(printBtn);
+
+  // Export Excel
+  const expBtn=el('button','tbtn');expBtn.textContent='⬇ Export';
+  expBtn.addEventListener('click',()=>{
+    const rows=getFilteredRows();
+    if(!rows.length){alert('Nicio data de exportat.');return;}
+    const out=rows.map(r=>({
+      'Prio':r.prio,'Produs Final':r.itemNo,'Cant. plan':r.planQ,
+      'Cod Material':r.matNo,'Denumire':r.matName,'Tip':r.matType,
+      'Necesar':r.needed,'On Hand':r.onHand,'WIP':r.totalWIP,'Net':r.net,
+      'Workcentere':r.wcs.join(', '),
+    }));
+    const wb=XLSX.utils.book_new();
+    const ws=XLSX.utils.json_to_sheet(out);
+    ws['!cols']=[{wch:6},{wch:18},{wch:10},{wch:18},{wch:28},{wch:6},{wch:10},{wch:10},{wch:10},{wch:10},{wch:40}];
+    XLSX.utils.book_append_sheet(wb,ws,'Subcomponente Plan');
+    XLSX.writeFile(wb,`Subcomponente_Plan_${new Date().toISOString().slice(0,10)}.xlsx`);
+  });
+  tb.appendChild(expBtn);
+
+  // Zoom
+  tb.appendChild(mkZoomCtrl('rapoarte'));
+
+  container.appendChild(tb);
+
+  // Count bar
+  const countBar=dv('');countBar.id='sub-count-bar';
+  countBar.style.cssText='padding:5px 14px;background:#f0fdf4;border-bottom:1px solid #86efac;font-size:11px;color:#15803d;font-weight:600;flex-shrink:0';
+  container.appendChild(countBar);
+
+  // Zoom area
+  const zoomArea=dv('');zoomArea.id='zoom-area-rapoarte';
+  zoomArea.style.cssText='flex:1;overflow:hidden;display:flex;flex-direction:column';
+  zoomArea.style.zoom=(S.zoom.rapoarte/100).toString();
+  const tableWrap=dv('sub-rep-wrap');zoomArea.appendChild(tableWrap);
+  container.appendChild(zoomArea);
+
+  function getFilteredRows(){
+    const q=f.q.toLowerCase();
+    return allData.filter(r=>{
+      if(q&&!r.itemNo.toLowerCase().includes(q)&&!r.matNo.toLowerCase().includes(q)&&!r.matName.toLowerCase().includes(q))return false;
+      if(f.onlyNeeded&&r.net<=0)return false;
+      if(f.wcFilter&&!r.wcs.includes(f.wcFilter))return false;
+      // col filters
+      const cf=f.colFilters;
+      if(cf.prio&&!(r.prio||'').toLowerCase().includes(cf.prio.toLowerCase()))return false;
+      if(cf.itemNo&&!r.itemNo.toLowerCase().includes(cf.itemNo.toLowerCase()))return false;
+      if(cf.matNo&&!r.matNo.toLowerCase().includes(cf.matNo.toLowerCase()))return false;
+      if(cf.matName&&!r.matName.toLowerCase().includes(cf.matName.toLowerCase()))return false;
+      if(cf.matType&&!r.matType.toLowerCase().includes(cf.matType.toLowerCase()))return false;
+      if(cf.wcs&&!r.wcs.join(',').toLowerCase().includes(cf.wcs.toLowerCase()))return false;
+      if(cf.needed){const n=parseFloat(cf.needed);if(!isNaN(n)&&Math.round(r.needed)!==Math.round(n))return false;}
+      if(cf.net){const n=parseFloat(cf.net);if(!isNaN(n)&&Math.round(r.net)!==Math.round(n))return false;}
+      return true;
+    });
+  }
+
+  function rebuild(){
+    buildTable();
+    const rows=getFilteredRows();
+    const cb=document.getElementById('sub-count-bar');
+    if(cb)cb.textContent=`${rows.length.toLocaleString()} subcomponente · net necesar: ${rows.reduce((s,r)=>s+(r.net>0?r.net:0),0).toLocaleString('ro-RO',{maximumFractionDigits:1})} buc`;
+  }
+
+  function buildTable(){
+    tableWrap.innerHTML='';
+    const visCols=f.colOrder.filter(c=>f.visibleCols.has(c));
+    const rows=getFilteredRows();
+    const tbl=el('table','sub-rep-table');tbl.style.tableLayout='fixed';
+    const thead=el('thead');
+    // Header row
+    const hr=el('tr');let dragSrc=null;
+    visCols.forEach(colId=>{
+      const w=f.colWidths[colId]||120;
+      const th=el('th');th.style.width=w+'px';th.setAttribute('data-col',colId);
+      const inner=dv('sub-rep-th-inner');
+      inner.appendChild(sp('',LABELS[colId]||colId));
+      // Resize
+      const rh=el('div','plan-col-rh');
+      rh.addEventListener('mousedown',e=>{
+        e.stopPropagation();e.preventDefault();rh.classList.add('dragging');
+        const sx=e.clientX,sw=f.colWidths[colId]||w;
+        const mm=ev=>{const nw=Math.max(40,sw+(ev.clientX-sx));f.colWidths[colId]=nw;th.style.width=nw+'px';tbl.querySelectorAll(`td:nth-child(${visCols.indexOf(colId)+1})`).forEach(t=>t.style.width=nw+'px');};
+        const mu=()=>{rh.classList.remove('dragging');document.removeEventListener('mousemove',mm);document.removeEventListener('mouseup',mu);};
+        document.addEventListener('mousemove',mm);document.addEventListener('mouseup',mu);
+      });
+      inner.appendChild(rh);th.appendChild(inner);
+      // Drag reorder
+      th.setAttribute('draggable','true');
+      th.addEventListener('dragstart',e=>{dragSrc=colId;e.dataTransfer.effectAllowed='move';});
+      th.addEventListener('dragover',e=>{e.preventDefault();th.classList.add('plan-drag-over');});
+      th.addEventListener('dragleave',()=>th.classList.remove('plan-drag-over'));
+      th.addEventListener('drop',e=>{
+        e.preventDefault();th.classList.remove('plan-drag-over');
+        if(!dragSrc||dragSrc===colId)return;
+        const o=f.colOrder;const fi=o.indexOf(dragSrc),ti=o.indexOf(colId);
+        if(fi<0||ti<0)return;o.splice(fi,1);o.splice(ti,0,dragSrc);buildTable();
+      });
+      hr.appendChild(th);
+    });
+    thead.appendChild(hr);
+    // Filter row
+    const fr=el('tr');fr.style.cssText='position:sticky;top:34px;z-index:3';
+    visCols.forEach(colId=>{
+      const th=el('th');th.style.cssText='background:#fff;border-bottom:1px solid var(--border);padding:3px 5px';
+      th.style.width=(f.colWidths[colId]||120)+'px';
+      const inp=el('input','sub-rep-col-filter');inp.placeholder='...';inp.value=f.colFilters[colId]||'';
+      inp.setAttribute('data-sub-filter',colId);
+      inp.addEventListener('input',e2=>{
+        const col=e2.target.getAttribute('data-sub-filter');
+        const ss=e2.target.selectionStart,se=e2.target.selectionEnd;
+        f.colFilters[col]=e2.target.value;
+        // Rebuild tbody only
+        const oldTb=tbl.querySelector('tbody');const nb=buildTbody(rows,visCols);
+        if(oldTb)tbl.replaceChild(nb,oldTb);else tbl.appendChild(nb);
+        const cr=document.getElementById('sub-count-bar');
+        if(cr)cr.textContent=`${getFilteredRows().length.toLocaleString()} subcomponente`;
+        const restored=tableWrap.querySelector(`input[data-sub-filter="${col}"]`);
+        if(restored){restored.focus();try{restored.setSelectionRange(ss,se);}catch(_){}}
+      });
+      th.appendChild(inp);fr.appendChild(th);
+    });
+    thead.appendChild(fr);tbl.appendChild(thead);
+    tbl.appendChild(buildTbody(rows,visCols));
+    tableWrap.appendChild(tbl);
+  }
+
+  function buildTbody(rows,visCols){
+    const tbody=el('tbody');
+    let lastFP='';
+    for(const r of rows){
+      const tr=el('tr');
+      if(r.net>0)tr.style.background='#fff';
+      else tr.style.background='#f0fdf4';
+      visCols.forEach(colId=>{
+        const td=el('td');td.style.width=(f.colWidths[colId]||120)+'px';
+        if(colId==='prio'){
+          const ps=sp('',r.prio||'');ps.style.cssText='font-weight:700;font-family:Arial,monospace;color:#92400e';td.appendChild(ps);
+        } else if(colId==='itemNo'){
+          const s=sp('stk-code',r.itemNo);if(r.itemNo!==lastFP){lastFP=r.itemNo;}else s.style.opacity='.3';td.appendChild(s);
+        } else if(colId==='matNo'){td.appendChild(sp('stk-code',r.matNo));}
+        else if(colId==='matName'){td.textContent=r.matName;td.title=r.matName;}
+        else if(colId==='matType'){
+          const cls=r.matType==='M'?'stk-type-m':r.matType==='P'?'stk-type-b':'stk-type-d';
+          if(r.matType)td.appendChild(sp(cls,r.matType));
+        }
+        else if(NUMERIC.has(colId)){
+          const v=r[colId];
+          const s=sp('pdm-num',fmtN(v));
+          if(colId==='net')s.style.color=v>0?'#dc2626':'#15803d';
+          if(colId==='onHand'&&v<0)s.style.color='#dc2626';
+          s.style.display='block';s.style.textAlign='right';
+          td.appendChild(s);
+        }
+        else if(colId==='wcs'){
+          const wrap2=dv('');wrap2.style.cssText='display:flex;flex-wrap:wrap;gap:3px';
+          r.wcs.slice(0,4).forEach(wc=>{const p=sp('stk-wip-pill',wc);wrap2.appendChild(p);});
+          if(r.wcs.length>4){const m=sp('stk-fp-more',`+${r.wcs.length-4}`);wrap2.appendChild(m);}
+          td.appendChild(wrap2);
+        }
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    }
+    if(!rows.length){
+      const tr=el('tr');const td=el('td');td.colSpan=visCols.length;
+      td.style.cssText='text-align:center;padding:20px;color:var(--text3);font-size:12px';
+      td.textContent='Niciun subcomponent corespunde filtrelor.';tr.appendChild(td);tbody.appendChild(tr);
+    }
+    return tbody;
+  }
+
+  rebuild();
 }
 
 function mkEmpty(h,p,showLeg){
