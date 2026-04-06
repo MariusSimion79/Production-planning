@@ -5140,12 +5140,9 @@ function exportPlanDetail(itemNo, plan, sortedGroups, pctDisplay, eff){
    Shows: total needed, OnHand, WIP breakdown, qty to process at WC, exec time.
 ═══════════════════════════════════════════════════════════════ */
 function buildDispozitiiData(){
-  // Returns Map<matNo, {matNo,matName,matType,entries:[{itemNo,prio,unQty,planQ,needed}],
-  //   totalNeeded, onHand, totalWIP, wipByWC, net, ops:[{opNo,opNoNum,wcName,runT,setupT}]}>
   const byMat=new Map();
   if(!S.planData.size||!S.bomIdx) return byMat;
 
-  // Sort plan by prio
   const sortedPlan=[...S.planData.entries()].sort((a,b)=>{
     const pa=S.planPrio[a[0]]||'',pb=S.planPrio[b[0]]||'';
     if(!pa&&!pb)return a[0].localeCompare(b[0]);
@@ -5158,19 +5155,18 @@ function buildDispozitiiData(){
   for(const [itemNo,plan] of sortedPlan){
     const prio=S.planPrio[itemNo]||'';
     const planQ=plan.totalQty;
-    // Get all BOM components for this FP
-    const bomRows=S.bomIdx?.get(`${itemNo}__${itemNo}`)||[];
-    // Walk BOM recursively
-    function walk(compNo,parentQty,vis){
+
+    // Walk BOM recursively — defined as const to avoid strict-mode block function error
+    const walkBOM=(compNo,parentQty,vis)=>{
       const key=`${itemNo}__${compNo}`;
       const rows=S.bomIdx?.get(key)||[];
       for(const row of rows){
         const matNo=str(row['Material no']);
+        if(!matNo)continue;
         const unQty=parseFloat(row['Material qty'])||1;
         const needed=parentQty*unQty;
         const st=S.stockIdx?.get(matNo)||{onHand:0,totalWIP:0,type:'',name:'',wipByWC:{}};
-        // BOW ops for this component in this FP context
-        const rawOps=S.bowIdx?.get(key)||[];
+        const rawOps=S.bowIdx?.get(`${itemNo}__${matNo}`)||[];
         const ops=rawOps.map(op=>({
           opNo:str(op['Operation no']||''),
           opNoNum:parseFloat(str(op['Operation no']||'0'))||0,
@@ -5188,15 +5184,14 @@ function buildDispozitiiData(){
         const m=byMat.get(matNo);
         m.entries.push({itemNo,prio,unQty,planQ,needed});
         m.totalNeeded+=needed;
-        // net = max(0, totalNeeded - onHand - totalWIP)
         m.net=Math.max(0,m.totalNeeded-Math.max(0,m.onHand)-Math.max(0,m.totalWIP));
 
         if(!vis.has(matNo)&&(S.bomIdx?.get(`${itemNo}__${matNo}`)||[]).length>0){
-          walk(matNo,needed,new Set([...vis,matNo]));
+          walkBOM(matNo,needed,new Set([...vis,matNo]));
         }
       }
-    }
-    walk(itemNo,planQ,new Set([itemNo]));
+    };
+    walkBOM(itemNo,planQ,new Set([itemNo]));
   }
   return byMat;
 }
