@@ -4895,95 +4895,55 @@ ${bodyHTML}
     body.appendChild(info);modal.appendChild(body);overlay.appendChild(modal);document.body.appendChild(overlay);return;
   }
 
-  // ── Build grouped ops: opNoNum → {opNo,seq,wcName, components:[{matNo,needing,remMin,totalMin}], sumRem, sumTotal} ──
-  const opGroups=new Map(); // opNoNum → group
-  const seen=new Set();
-
-  function collectOpsGrouped(matNo){
+  // ── Build op list from BOW using calcExecTime.byWC (guaranteed correct, same as Structura) ──
+  // Step 1: Collect all unique ops (opNoNum→{opNo,wcName,wcType}) and per-WC component stock info
+  const opMeta=new Map(); // opNoNum → {opNo,wcName,wcType,seq,compStocks:[{matNo,onHand,totalWIP,wipByWC,needing}]}
+  const seenOps=new Set();
+  const gatherOps=(matNo)=>{
     const key=`${itemNo}__${matNo}`;
-    if(seen.has(key))return;seen.add(key);
-
+    if(seenOps.has(key))return;seenOps.add(key);
     const rawOps=S.bowIdx?.get(key)||[];
-    const ops=rawOps.map(op=>({
-      seq:parseFloat(String(op['Ope seq']||'0').replace(',','.'))||0,
-      opNo:str(op['Operation no']||''),
-      opNoNum:parseFloat(String(op['Operation no']||'0').replace(',','.'))||0,
-      wcName:str(op['Ope name']||op['Ope descr']||'?'),
-      runT:parseFloat(String(op['Run time']||'0').replace(',','.'))||0,
-      setupT:parseFloat(String(op['Setup time']||'0').replace(',','.'))||0,
-    })).sort((a,b)=>a.seq-b.seq);
-
-    const stock=S.stockIdx?.get(matNo)||{onHand:0,wipByWC:{}};
-    const onHand=Math.max(0,stock.onHand);
-    const wipByWC=stock.wipByWC||{};
-    // For FP own ops: use full qty (calcExecTime deducts onHand internally)
-    // For components: use needs.needed (= component qty for effectiveQty FPs)
-    const unitsNeeded=matNo===itemNo?qty:Math.max(0,needs?.get(matNo)?.needed||0);
-
-    // Build wipAtIdx map
-    const wipAtIdx=new Map();
-    for(const [poCol,wipQty] of Object.entries(wipByWC)){
-      if(!wipQty||wipQty<=0)continue;
-      const wcNamePO=wcLabel(poCol).toLowerCase();
-      let bestIdx=-1;
-      for(let i=ops.length-1;i>=0;i--){if(ops[i].wcName.toLowerCase()===wcNamePO){bestIdx=i;break;}}
-      if(bestIdx<0)continue;
-      wipAtIdx.set(bestIdx,(wipAtIdx.get(bestIdx)||0)+wipQty);
-    }
-
-    for(let i=0;i<ops.length;i++){
-      const op=ops[i];
-      let alreadyDone=onHand;
-      for(const [seqIdx,wq] of wipAtIdx){if(seqIdx>i)alreadyDone+=wq;}
-      const needing=Math.max(0,unitsNeeded-alreadyDone);
-      const remMin = needing > 0 ? (needing * op.runT + op.setupT) / eff : 0;
-      const totalMin = unitsNeeded > 0 ? (unitsNeeded * op.runT + op.setupT) / eff : 0;
-
-      if(!opGroups.has(op.opNoNum)){
-        opGroups.set(op.opNoNum,{opNo:op.opNo,opNoNum:op.opNoNum,seq:op.seq,wcName:op.wcName,sumRem:0,sumTotal:0,components:[]});
+    const st=S.stockIdx?.get(matNo)||{onHand:0,totalWIP:0,wipByWC:{}};
+    const needing=matNo===itemNo?effectiveQty:Math.max(0,needs?.get(matNo)?.net??needs?.get(matNo)?.needed??0);
+    for(const op of rawOps){
+      const opNoNum=parseFloat(String(op['Operation no']||'0').replace(',','.'))||0;
+      const wcName=str(op['Ope name']||op['Ope descr']||'?');
+      const wcType=S.wcSetupIdx?.[wcName]?.wcType||'';
+      const seq=parseFloat(String(op['Ope seq']||'0').replace(',','.'))||0;
+      if(!opMeta.has(opNoNum)){
+        opMeta.set(opNoNum,{opNo:str(op['Operation no']||''),opNoNum,wcName,wcType,seq,compStocks:[]});
       }
-      const grp=opGroups.get(op.opNoNum);
-      grp.sumRem+=remMin;
-      grp.sumTotal+=totalMin;
-      // Calc total WIP for this component
-      const totalWIP=Object.values(wipByWC).reduce((s,v)=>s+Math.max(0,v),0);
-      grp.components.push({matNo,needing,remMin,totalMin,runT:op.runT,setupT:op.setupT,
-        onHand:stock.onHand,totalWIP,wipByWC,unitsNeeded});
+      const m=opMeta.get(opNoNum);
+      // Add component stock info for sub-row display (deduplicate by matNo per op group)
+      if(!m.compStocks.find(cs=>cs.matNo===matNo)){
+        m.compStocks.push({
+          matNo,needing,
+          onHand:st.onHand,totalWIP:Math.max(0,st.totalWIP),wipByWC:st.wipByWC||{}
+        });
+      }
     }
-    // Recurse children
+    // Recurse into BOM children
     const bomRows=S.bomIdx?.get(key)||[];
-    for(const row of bomRows){const cm=str(row['Material no']);if(cm)collectOpsGrouped(cm);}
-  }
-  collectOpsGrouped(itemNo);
+    for(const row of bomRows){const cm=str(row['Material no']);if(cm)gatherOps(cm);}
+  };
+  gatherOps(itemNo);
 
-  // Attach wcType from wcSetupIdx, then sort: Initial→Intermediary→Final, opNoNum within type
+  // Step 2: Sort by WC type order, then by opNoNum
   const TYPE_ORDER={'1 Initial Op':0,'2 Intermediary Op':1,'3 Final Op':2,'3 Final Op ':2};
-  const sortedGroups=[...opGroups.values()];
-  sortedGroups.forEach(g=>{g.wcType=S.wcSetupIdx?.[g.wcName]?.wcType||'';});
-  sortedGroups.sort((a,b)=>{
+  const sortedGroups=[...opMeta.values()].sort((a,b)=>{
     const ta=TYPE_ORDER[(a.wcType||'').trim()]??99;
     const tb=TYPE_ORDER[(b.wcType||'').trim()]??99;
     if(ta!==tb)return ta-tb;
     return a.opNoNum-b.opNoNum;
   });
 
-  // ── WIP cascade logic ──
-  // Count WIP pieces in "Final Op" workcenters for this FP
-  const stockFP2=S.stockIdx?.get(itemNo)||{onHand:0,totalWIP:0,wipByWC:{}};
-  const remaining=Math.max(0,qty-Math.max(0,stockFP2.onHand));
-  let wipInFinal=0;
-  for(const [poCol,wipQty] of Object.entries(stockFP2.wipByWC||{})){
-    if(!wipQty||wipQty<=0)continue;
-    const wcN=wcLabel(poCol);
-    const wcMeta=S.wcSetupIdx?.[wcN];
-    if(wcMeta&&wcMeta.wcType&&wcMeta.wcType.includes('Final'))wipInFinal+=wipQty;
-  }
-  // If WIP in Final ops >= remaining pieces needed → mark Initial+Intermediary as done
-  const cascadeFinalized=wipInFinal>=remaining&&remaining>0;
-
-  // Compute totals from groups (authoritative — avoids calcExecTime indexing mismatch)
-  const grpTotalRem=sortedGroups.reduce((s,g)=>s+g.sumRem,0);
-  const grpTotalAll=sortedGroups.reduce((s,g)=>s+g.sumTotal,0);
+  // Step 3: Compute group times from execTime.byWC and totalExecTime.byWC (same as Structura)
+  sortedGroups.forEach(g=>{
+    const rem=execTime.byWC.get(g.wcName)||{runMin:0,setupMin:0};
+    const tot=totalExecTime.byWC.get(g.wcName)||{runMin:0,setupMin:0};
+    g.sumRem=(rem.runMin+rem.setupMin)/eff;
+    g.sumTotal=(tot.runMin+tot.setupMin)/eff;
+  });
 
   // Recompute pct using authoritative calcExecTime values (matches Structura)
   let pctFinal=fullyOnHand?100:totalExecTime.total>0?Math.min(99.99,Math.max(0,(1-execTime.total/totalExecTime.total)*100)):0;
@@ -5072,59 +5032,42 @@ ${bodyHTML}
       barFill.style.cssText=`height:100%;border-radius:5px;background:${c};width:${Math.min(100,donePctFinal)}%`;
       barBg.appendChild(barFill);tdBar.appendChild(barBg);tr.appendChild(tdBar);
 
-      // Sub-rows (components) — deduplicate by matNo (take highest remMin entry)
+      // Sub-rows (components) from compStocks
       const subTbody=el('tbody','pdm-sub-tbody');subTbody.id='sub-'+grpId;
-      // Deduplicate components by matNo
-      const compMap=new Map();
-      for(const comp of grp.components){
-        if(!compMap.has(comp.matNo)||comp.remMin>compMap.get(comp.matNo).remMin)
-          compMap.set(comp.matNo,comp);
-      }
-      for(const comp of compMap.values()){
+      for(const comp of (grp.compStocks||[])){
         const sr=el('tr','pdm-sub-row');
-        if(comp.remMin<=0.01)sr.style.background='#f0fdf4';
+        const compDone=comp.needing<=0;
+        if(compDone)sr.style.background='#f0fdf4';
         sr.appendChild(el('td'));sr.appendChild(el('td'));
         // Mat code
         const tdC=el('td');tdC.appendChild(sp('pdm-sub-matno',comp.matNo===itemNo?'(FP) '+comp.matNo:comp.matNo));sr.appendChild(tdC);
-        // Total
-        const tdST=el('td');tdST.appendChild(sp('pdm-num',fmtMin(comp.totalMin)));sr.appendChild(tdST);
-        // Remaining
+        // Total (no per-component total — group total covers it)
+        const tdST=el('td');tdST.textContent='—';sr.appendChild(tdST);
+        // Status
         const tdSR=el('td');
-        const compDone=comp.remMin<=0.01;
-        if(compDone)tdSR.appendChild(sp('pdm-done','Finalizat'));
-        else tdSR.appendChild(sp('pdm-num rem',fmtMin(comp.remMin)));
+        if(compDone)tdSR.appendChild(sp('pdm-done','Acoperit'));
+        else tdSR.appendChild(sp('pdm-num rem',fmtN(comp.needing)+' buc'));
         sr.appendChild(tdSR);
-        // On Hand / WIP split (instead of just needing buc)
+        // On Hand / WIP
         const tdSQ=el('td');tdSQ.colSpan=2;
         const stockDetail=dv('');stockDetail.style.cssText='font-size:10.5px;display:flex;flex-wrap:wrap;gap:6px';
-        const needed=comp.unitsNeeded;
         const oh=Math.max(0,comp.onHand);
-        const wip=Math.max(0,comp.totalWIP);
-        // On Hand badge
-        if(oh>0||comp.remMin<=0.01){
-          const ohBadge=sp('stk-badge stk-oh',`📦 On Hand: ${fmtN(oh)}`);
-          stockDetail.appendChild(ohBadge);
-        }
-        // WIP badge
+        const wip=comp.totalWIP;
+        if(oh>0){const ohBadge=sp('stk-badge stk-oh',`📦 On Hand: ${fmtN(oh)}`);stockDetail.appendChild(ohBadge);}
         if(wip>0){
           const wipBadge=sp('stk-badge stk-wip',`🔄 WIP: ${fmtN(wip)}`);
           stockDetail.appendChild(wipBadge);
-          // WIP breakdown by WC
-          if(Object.keys(comp.wipByWC||{}).length>1){
+          const wipEntries=Object.entries(comp.wipByWC||{}).filter(([,q])=>q>0);
+          if(wipEntries.length>0){
             const wcDetail=sp('','');wcDetail.style.cssText='font-size:9.5px;color:var(--text3);display:block;margin-top:2px;width:100%';
-            wcDetail.textContent='  '+Object.entries(comp.wipByWC).filter(([,q])=>q>0).map(([wc,q])=>`${wcLabel(wc)}: ${fmtN(q)}`).join(' · ');
+            wcDetail.textContent='  '+wipEntries.map(([wc,q])=>`${wcLabel(wc)}: ${fmtN(q)}`).join(' · ');
             stockDetail.appendChild(wcDetail);
           }
         }
-        // Needing
-        if(comp.needing>0&&!fullyOnHand){
+        if(!compDone&&!fullyOnHand){
           const needBadge=sp('','');needBadge.style.cssText='font-size:10px;color:#dc2626;font-weight:600';
           needBadge.textContent=`⚠ Mai trebuie: ${fmtN(comp.needing)} buc`;
           stockDetail.appendChild(needBadge);
-        } else if(oh+wip>=needed&&needed>0){
-          const okBadge=sp('','');okBadge.style.cssText='font-size:10px;color:#15803d;font-weight:600';
-          okBadge.textContent=`✓ Acoperit (${fmtN(needed)} necesare)`;
-          stockDetail.appendChild(okBadge);
         }
         tdSQ.appendChild(stockDetail);sr.appendChild(tdSQ);
         subTbody.appendChild(sr);
@@ -5195,23 +5138,17 @@ function exportPlanDetail(itemNo, plan, sortedGroups, pctDisplay, eff){
       '% Realizare':status,
     });
 
-    // Sub-rows: deduplicated components
-    const compMap=new Map();
-    for(const comp of grp.components){
-      if(!compMap.has(comp.matNo)||comp.remMin>compMap.get(comp.matNo).remMin)
-        compMap.set(comp.matNo,comp);
-    }
-    for(const comp of compMap.values()){
+    // Sub-rows from compStocks
+    for(const comp of (grp.compStocks||[])){
       const oh=Math.max(0,comp.onHand);
-      const wip=Math.max(0,comp.totalWIP);
-      const compDone=comp.remMin<=0.01;
+      const wip=comp.totalWIP;
       rows.push({
         'Cod produs':'  '+comp.matNo,
         'Denumire':comp.matNo===itemNo?'(FP)':'',
-        'Pret EUR/buc':+comp.totalMin.toFixed(2),
-        'Cant. planificata':compDone?0:+comp.remMin.toFixed(2),
+        'Pret EUR/buc':'',
+        'Cant. planificata':'',
         'Eficienta %':'On Hand: '+oh+' · WIP: '+wip,
-        '% Realizare':compDone?'Finalizat':'Necesar: '+Math.round(comp.needing)+' buc',
+        '% Realizare':comp.needing<=0?'Acoperit':'Necesar: '+Math.round(comp.needing)+' buc',
       });
     }
     rows.push({}); // blank between groups
