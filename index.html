@@ -4016,11 +4016,6 @@ function _buildPlanTbody(wrap){
     const price=getSalesPrice(itemNo,first);
     const valoare=price*plan.totalQty;
     const tr=el('tr');
-    tr.style.cursor='pointer';tr.title='Click pentru detalii operatii';
-    tr.addEventListener('click',e=>{
-      if(e.target.closest('.plan-del-btn')||e.target.closest('.plan-obs'))return;
-      showPlanDetail(itemNo,plan);
-    });
     visCols.forEach(colId=>{
       const td=el('td');td.style.width=(pf2.colWidths[colId]||120)+'px';td.style.overflow='hidden';td.style.boxSizing='border-box';
       if(colId==='prio'){
@@ -4052,6 +4047,9 @@ function _buildPlanTbody(wrap){
           execRemMin=execRaw.total/eff;
         }
         const cell2=dv('plan-real-cell');
+        cell2.style.cursor='pointer';
+        cell2.title='Click pentru detaliu operatii';
+        cell2.addEventListener('click',()=>showPlanDetail(itemNo,plan));
         const pctEl=sp('plan-real-pct',pctDisplay);pctEl.style.color=pctColor;
         cell2.appendChild(pctEl);
         const stockR=S.stockIdx?.get(itemNo)||{onHand:0,totalWIP:0};
