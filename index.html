@@ -4960,6 +4960,17 @@ ${bodyHTML}
   const progLbl2=document.getElementById('pdm-prog-lbl');
   if(progLbl2) progLbl2.textContent=pctFinalDisplay+' realizat';
 
+  // ── WIP cascade logic ──
+  // Count WIP in Final Op workcenters at FP level
+  let wipInFinal=0;
+  for(const [poCol,wipQty] of Object.entries(stockFP.wipByWC||{})){
+    if(!wipQty||wipQty<=0)continue;
+    const wcN=wcLabel(poCol);
+    const wcMeta=S.wcSetupIdx?.[wcN];
+    if(wcMeta&&wcMeta.wcType&&wcMeta.wcType.includes('Final'))wipInFinal+=wipQty;
+  }
+  const cascadeFinalized=wipInFinal>=effectiveQty&&effectiveQty>0;
+
   if(sortedGroups.length>0){
     if(cascadeFinalized){
       const banner=dv('');
