@@ -4746,12 +4746,12 @@ function showPlanDetail(itemNo, plan){
   const qty=plan.totalQty;
   const stockFP=S.stockIdx?.get(itemNo)||{onHand:0,totalWIP:0,wipByWC:{}};
   const fullyOnHand=Math.max(0,stockFP.onHand)>=qty;
-  // Effective qty = pieces still to produce (after on-hand stock)
+  // Pieces still to produce = qty - onHand (for display label and WIP cascade)
   const effectiveQty=Math.max(0,qty-Math.max(0,stockFP.onHand));
-  // needs and exec time based on effectiveQty (mirrors Structura logic)
+  // Component needs: based on effectiveQty (how many components for the pieces we still need to make)
+  // FP operations: based on full qty — calcExecTime deducts onHand internally, same as Structura
   const needs=S.stockIdx?calcNeeds(itemNo,effectiveQty):null;
-  const execTime=calcExecTime(itemNo,effectiveQty,needs);
-  // totalExecTime = denominator for % realized — based on full qty (no stock deduction)
+  const execTime=calcExecTime(itemNo,qty,needs);
   const totalExecTime=calcTotalExecTime(itemNo,qty);
   let pct=fullyOnHand?100
     :totalExecTime.total>0?Math.min(99.99,Math.max(0,(1-execTime.total/totalExecTime.total)*100))
@@ -4916,8 +4916,9 @@ ${bodyHTML}
     const stock=S.stockIdx?.get(matNo)||{onHand:0,wipByWC:{}};
     const onHand=Math.max(0,stock.onHand);
     const wipByWC=stock.wipByWC||{};
-    // For FP: use effectiveQty (qty - onHand). For components: use needs.needed (already reduced)
-    const unitsNeeded=matNo===itemNo?effectiveQty:Math.max(0,needs?.get(matNo)?.needed||0);
+    // For FP own ops: use full qty (calcExecTime deducts onHand internally)
+    // For components: use needs.needed (= component qty for effectiveQty FPs)
+    const unitsNeeded=matNo===itemNo?qty:Math.max(0,needs?.get(matNo)?.needed||0);
 
     // Build wipAtIdx map
     const wipAtIdx=new Map();
@@ -4984,15 +4985,15 @@ ${bodyHTML}
   const grpTotalRem=sortedGroups.reduce((s,g)=>s+g.sumRem,0);
   const grpTotalAll=sortedGroups.reduce((s,g)=>s+g.sumTotal,0);
 
-  // Recompute pct from groups (with 99.99% cap if FP not fully on hand)
-  let pctFinal=fullyOnHand?100:grpTotalAll>0?Math.min(99.99,(1-grpTotalRem/grpTotalAll)*100):0;
+  // Recompute pct using authoritative calcExecTime values (matches Structura)
+  let pctFinal=fullyOnHand?100:totalExecTime.total>0?Math.min(99.99,Math.max(0,(1-execTime.total/totalExecTime.total)*100)):0;
   if(pctFinal>=100&&!fullyOnHand)pctFinal=99.99;
   const pctFinalDisplay=pctFinal===100?'100%':pctFinal.toFixed(2)+'%';
   const pctFinalColor=pctFinal===100?'#16a34a':pctFinal>=50?'#ca8a04':pctFinal>0?'#ea580c':'#dc2626';
 
-  // Update summary bar with correct values from opGroups
-  remVal.textContent=' '+fmtMin(grpTotalRem);
-  totVal.textContent=' '+fmtMin(grpTotalAll);
+  // Update summary bar with authoritative values from calcExecTime (same as Structura)
+  remVal.textContent=' '+fmtMin(execTime.total/eff);
+  totVal.textContent=' '+fmtMin(totalExecTime.total/eff);
   // Update pct display
   const pctEl2=document.querySelector('.pdm-real-pct');
   if(pctEl2){pctEl2.textContent=pctFinalDisplay;pctEl2.style.color=pctFinalColor;}
