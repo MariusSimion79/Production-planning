@@ -4744,11 +4744,15 @@ function showPlanDetail(itemNo, plan){
 
   const eff=(S.eficientaPlan||100)/100;
   const qty=plan.totalQty;
-  const needs=S.stockIdx?calcNeeds(itemNo,qty):null;
-  const execTime=calcExecTime(itemNo,qty,needs);
-  const totalExecTime=calcTotalExecTime(itemNo,qty);
-  const stockFP=S.stockIdx?.get(itemNo)||{onHand:0,totalWIP:0};
+  const stockFP=S.stockIdx?.get(itemNo)||{onHand:0,totalWIP:0,wipByWC:{}};
   const fullyOnHand=Math.max(0,stockFP.onHand)>=qty;
+  // Effective qty = pieces still to produce (after on-hand stock)
+  const effectiveQty=Math.max(0,qty-Math.max(0,stockFP.onHand));
+  // needs and exec time based on effectiveQty (mirrors Structura logic)
+  const needs=S.stockIdx?calcNeeds(itemNo,effectiveQty):null;
+  const execTime=calcExecTime(itemNo,effectiveQty,needs);
+  // totalExecTime = denominator for % realized — based on full qty (no stock deduction)
+  const totalExecTime=calcTotalExecTime(itemNo,qty);
   let pct=fullyOnHand?100
     :totalExecTime.total>0?Math.min(99.99,Math.max(0,(1-execTime.total/totalExecTime.total)*100))
     :0;
@@ -4854,7 +4858,7 @@ ${bodyHTML}
 
   // Placeholders — set immediately from execTime, updated after opGroups are built
   const remStatD=dv('');remStatD.style.marginBottom='5px';
-  remStatD.appendChild(sp('pdm-real-label','Timp ramas (eficienta '+S.eficientaPlan+'%):'));
+  remStatD.appendChild(sp('pdm-real-label',`Timp ramas (${fmtN(effectiveQty)} buc de produs, eficienta ${S.eficientaPlan}%):`));
   const remVal=sp('pdm-real-val');
   remVal.textContent=' '+(fullyOnHand?'0 min':fmtMin(execTime.total/eff));
   remVal.style.cssText='font-size:15px;font-weight:800;color:#7c3aed';
@@ -4912,7 +4916,8 @@ ${bodyHTML}
     const stock=S.stockIdx?.get(matNo)||{onHand:0,wipByWC:{}};
     const onHand=Math.max(0,stock.onHand);
     const wipByWC=stock.wipByWC||{};
-    const unitsNeeded=matNo===itemNo?qty:(needs?.get(matNo)?.needed||qty);
+    // For FP: use effectiveQty (qty - onHand). For components: use needs.needed (already reduced)
+    const unitsNeeded=matNo===itemNo?effectiveQty:Math.max(0,needs?.get(matNo)?.needed||0);
 
     // Build wipAtIdx map
     const wipAtIdx=new Map();
@@ -4950,10 +4955,15 @@ ${bodyHTML}
   }
   collectOpsGrouped(itemNo);
 
-  // Sort groups by opNoNum ASC, attach wcType from wcSetupIdx
-  const sortedGroups=[...opGroups.values()].sort((a,b)=>a.opNoNum-b.opNoNum);
-  sortedGroups.forEach(g=>{
-    g.wcType=S.wcSetupIdx?.[g.wcName]?.wcType||'';
+  // Attach wcType from wcSetupIdx, then sort: Initial→Intermediary→Final, opNoNum within type
+  const TYPE_ORDER={'1 Initial Op':0,'2 Intermediary Op':1,'3 Final Op':2,'3 Final Op ':2};
+  const sortedGroups=[...opGroups.values()];
+  sortedGroups.forEach(g=>{g.wcType=S.wcSetupIdx?.[g.wcName]?.wcType||'';});
+  sortedGroups.sort((a,b)=>{
+    const ta=TYPE_ORDER[(a.wcType||'').trim()]??99;
+    const tb=TYPE_ORDER[(b.wcType||'').trim()]??99;
+    if(ta!==tb)return ta-tb;
+    return a.opNoNum-b.opNoNum;
   });
 
   // ── WIP cascade logic ──
