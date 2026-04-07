@@ -898,7 +898,9 @@ const S={
   zoom:{structura:100, stocuri:100, fisiere:100, orderbook:100, rapoarte:100, planificare:100},
   reportObs:{},
   eficientaPlan:100,
-  wcAvailHours:{},   // wcName -> hours/week (user input, persisted)   // % efficiency for plan execution time calc
+  wcAvailHours:{},   // wcName -> hours/week (user input, persisted)
+  wcSetupData:null,   // parsed Workcenter_Setup rows
+  wcSetupIdx:null,    // wcName → {prodTeam, wcType}
   planData:new Map(),
   planObs:{},
   planPrio:{},  // itemNo → priority string (persisted)
@@ -1093,6 +1095,7 @@ async function sbLoadAllData(){
     {k:'bow',label:'BOW',apply:(r,t)=>applyBow(r,t)},
     {k:'po', label:'Planning Overview',apply:(r,t)=>applyPo(r,t)},
     {k:'ob', label:'Order Book',apply:(r,t)=>applyOb(r,t)},
+    {k:'wcs',label:'Workcenter Setup',apply:(r,t)=>applyWcSetup(r,t)},
   ]){
     S.loadMsg=`Se incarca ${label}...`;setLoadMsg(S.loadMsg);await yieldFrame();
     const data=await sbDownload(cfg,`data-${k}.json`);
@@ -1139,6 +1142,25 @@ const str=v=>v==null?'':String(v).trim();
     When building tree for ACI.GHS1EX0092C, we always pass the FP context,
     so lookups stay within that FP's BOM definition.
 */
+function applyWcSetup(rows,ts){
+  S.wcSetupData=rows;
+  const idx={};
+  for(const r of rows){
+    const wcNo=String(r['Workcenter']||'').trim();
+    const wcName=String(r['Workcenter name']||'').trim();
+    const prodTeam=parseFloat(r['Prod Team'])||0;
+    const wcType=String(r['Workcenter Type']||'').trim();
+    if(wcName){idx[wcName]={wcNo,prodTeam,wcType};}
+  }
+  S.wcSetupIdx=idx;
+  // Pre-populate wcAvailHours from prodTeam (8h * 5 days * prodTeam)
+  for(const [wcName,d] of Object.entries(idx)){
+    if(d.prodTeam>0&&!S.wcAvailHours[wcName]){
+      S.wcAvailHours[wcName]=8*5*d.prodTeam;
+    }
+  }
+}
+
 function buildBomIdx(rows){
   const m=new Map();
   for(const r of rows){
@@ -1286,6 +1308,8 @@ async function loadFromIndexedDB(){
   if(poe){S.loadMsg='Se incarca Planning Overview...';setLoadMsg(S.loadMsg);await yieldFrame();applyPo(poe.rows,poe.ts);await yieldFrame();}
   const obe=await dbLoad('ob');
   if(obe){S.loadMsg='Se incarca OrderBook...';setLoadMsg(S.loadMsg);await yieldFrame();applyOb(obe.rows,obe.ts);await yieldFrame();}
+  const wcse=await dbLoad('wcs');
+  if(wcse){S.loadMsg='Se incarca Workcenter Setup...';setLoadMsg(S.loadMsg);await yieldFrame();applyWcSetup(wcse.rows,wcse.ts);await yieldFrame();}
   const plane=await dbLoad('plan');
   if(plane?.entries){
     S.planData=new Map(plane.entries);
@@ -2216,10 +2240,11 @@ function renderFisiereTab(){
   [{key:'bom',icon:'📋',title:'TRV-Product structure – BOM',desc:'Structura materiala a produselor (componente, cantitati, tip MAKE/BUY)'},
    {key:'bow',icon:'⚙',title:'TRV-Product structure – BOW',desc:'Operatiile de productie asociate fiecarei componente (operatii, timpi)'},
    {key:'po',icon:'📊',title:'Planning Overview',desc:'Stocuri On Hand, WIP per workcenter, comenzi deschise'},
-   {key:'ob',icon:'📦',title:'Open Order Lines',desc:'Comenzi deschise: Entry/Confirm/Request dt, cantitati, clienti, preturi'}]
+   {key:'ob',icon:'📦',title:'Open Order Lines',desc:'Comenzi deschise: Entry/Confirm/Request dt, cantitati, clienti, preturi'},
+   {key:'wcs',icon:'🔧',title:'Workcenter Setup',desc:'Tipul de workcenter (Initial/Intermediary/Final), numarul de echipe (Prod Team) pentru calculul capacitatii'}]
   .forEach(fc=>{
-    const loaded=fc.key==='bom'?!!S.bomData:fc.key==='bow'?!!S.bowData:fc.key==='po'?!!S.poData:!!S.obData;
-    const meta=S.meta[fc.key]||{rows:0,ts:null};
+    const loaded=fc.key==='bom'?!!S.bomData:fc.key==='bow'?!!S.bowData:fc.key==='po'?!!S.poData:fc.key==='wcs'?!!S.wcSetupData:!!S.obData;
+    const meta=fc.key==='wcs'?{rows:S.wcSetupData?.length||0,ts:S.wcSetupData?._ts}:(S.meta[fc.key]||{rows:0,ts:null});
     const card=dv(`file-card${loaded?' loaded':''}`);
     const fch=dv('fc-header');
     fch.appendChild(sp('fc-icon',fc.icon));
@@ -2251,8 +2276,8 @@ function renderFisiereTab(){
         const buf=await readFileAsBuffer(file);
         const rows=parseBuffer(new Uint8Array(buf));
         const ts=Date.now();
-        if(fc.key==='bom')applyBom(rows,ts);else if(fc.key==='bow')applyBow(rows,ts);else if(fc.key==='po')applyPo(rows,ts);else applyOb(rows,ts);
-        await dbSave(fc.key,{rows,ts});
+        if(fc.key==='bom')applyBom(rows,ts);else if(fc.key==='bow')applyBow(rows,ts);else if(fc.key==='po')applyPo(rows,ts);else if(fc.key==='wcs'){applyWcSetup(rows,ts);rows._ts=ts;}else applyOb(rows,ts);
+        if(fc.key==='wcs'){await dbSave('wcs',{rows,ts});}else{await dbSave(fc.key,{rows,ts});}
         if(S.sbCfg&&S.session?.role==='admin'){
           lbl.innerHTML='';lbl.appendChild(el('span','spin-sm'));lbl.appendChild(document.createTextNode(' Sincronizare Supabase...'));
           try{await sbSaveData(fc.key,rows,ts);}catch(e){console.warn('Supabase sync:',e);}
@@ -4228,7 +4253,7 @@ function renderWcLoadPanel(container){
 
   // Header
   const thead=el('thead');const hr=el('tr');
-  ['Workcenter','Necesar (h)','Run (h)','Setup (h)','Disponibil (h/sapt.)','Grad incarcare','Top produse'].forEach(h=>{
+  ['Workcenter','Tip','Prod Team','Necesar (h)','Run (h)','Setup (h)','Disponibil (h/sapt.)','Grad incarcare','Top produse'].forEach(h=>{
     const th=el('th');th.textContent=h;hr.appendChild(th);
   });
   thead.appendChild(hr);tbl.appendChild(thead);
@@ -4238,7 +4263,13 @@ function renderWcLoadPanel(container){
 
   for(const [wc,d] of wcData){
     const needH=d.totalMin/60;
-    const availH=parseFloat(S.wcAvailHours[wc])||0;
+    const wcMeta=S.wcSetupIdx?.[wc]||null;
+    const prodTeam=wcMeta?.prodTeam||0;
+    const wcType=wcMeta?.wcType||'';
+    // Auto-fill availH from prodTeam if not manually set
+    const autoAvailH=prodTeam>0?8*5*prodTeam:0;
+    if(prodTeam>0&&!S.wcAvailHours[wc])S.wcAvailHours[wc]=autoAvailH;
+    const availH=parseFloat(S.wcAvailHours[wc])||autoAvailH;
     const pct=availH>0?Math.round((needH/availH)*100):null;
     const cls=pct===null?'':pct<=80?'ok':pct<=100?'warn':'over';
 
@@ -4246,6 +4277,12 @@ function renderWcLoadPanel(container){
 
     // WC name
     const tdName=el('td');tdName.appendChild(sp('',wc));tr.appendChild(tdName);
+
+    // WC Type
+    const tdType=el('td');tdType.style.cssText='font-size:10px;color:var(--text3)';tdType.textContent=wcType.replace(/^\d+ /,'');tr.appendChild(tdType);
+
+    // Prod Team
+    const tdPT=el('td');tdPT.style.cssText='text-align:center;font-family:Arial,monospace;font-weight:700';tdPT.textContent=prodTeam||'—';tr.appendChild(tdPT);
 
     // Necesar h
     const tdNeed=el('td');tdNeed.appendChild(sp('wc-num',needH.toFixed(1)+'h'));tr.appendChild(tdNeed);
@@ -4260,9 +4297,13 @@ function renderWcLoadPanel(container){
     const tdAvail=el('td');
     const inp=el('input','wc-avail-inp');
     inp.type='number';inp.min='0';inp.step='0.5';
-    inp.value=S.wcAvailHours[wc]||'';inp.placeholder='ore/săpt.';
+    inp.value=S.wcAvailHours[wc]||autoAvailH||'';
+    inp.placeholder='ore/săpt.';
+    if(autoAvailH>0&&!S.wcAvailHours[wc])inp.style.cssText='color:#6b7280;font-style:italic';
+    inp.title=autoAvailH>0?`Auto: 8h × 5 zile × ${prodTeam} echipe = ${autoAvailH}h`:'';
     inp.addEventListener('input',e=>{
       S.wcAvailHours[wc]=parseFloat(e.target.value)||0;
+      inp.style.cssText='';
       clearTimeout(debounceT);
       debounceT=setTimeout(()=>{savePlan();renderWcLoadPanel(container);},600);
     });
@@ -4909,8 +4950,25 @@ ${bodyHTML}
   }
   collectOpsGrouped(itemNo);
 
-  // Sort groups by opNoNum ASC
+  // Sort groups by opNoNum ASC, attach wcType from wcSetupIdx
   const sortedGroups=[...opGroups.values()].sort((a,b)=>a.opNoNum-b.opNoNum);
+  sortedGroups.forEach(g=>{
+    g.wcType=S.wcSetupIdx?.[g.wcName]?.wcType||'';
+  });
+
+  // ── WIP cascade logic ──
+  // Count WIP pieces in "Final Op" workcenters for this FP
+  const stockFP2=S.stockIdx?.get(itemNo)||{onHand:0,totalWIP:0,wipByWC:{}};
+  const remaining=Math.max(0,qty-Math.max(0,stockFP2.onHand));
+  let wipInFinal=0;
+  for(const [poCol,wipQty] of Object.entries(stockFP2.wipByWC||{})){
+    if(!wipQty||wipQty<=0)continue;
+    const wcN=wcLabel(poCol);
+    const wcMeta=S.wcSetupIdx?.[wcN];
+    if(wcMeta&&wcMeta.wcType&&wcMeta.wcType.includes('Final'))wipInFinal+=wipQty;
+  }
+  // If WIP in Final ops >= remaining pieces needed → mark Initial+Intermediary as done
+  const cascadeFinalized=wipInFinal>=remaining&&remaining>0;
 
   // Compute totals from groups (authoritative — avoids calcExecTime indexing mismatch)
   const grpTotalRem=sortedGroups.reduce((s,g)=>s+g.sumRem,0);
@@ -4934,6 +4992,12 @@ ${bodyHTML}
   if(progLbl2) progLbl2.textContent=pctFinalDisplay+' realizat';
 
   if(sortedGroups.length>0){
+    if(cascadeFinalized){
+      const banner=dv('');
+      banner.style.cssText='margin-bottom:10px;padding:8px 12px;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;font-size:11px;color:#15803d;font-weight:600';
+      banner.textContent=`✓ ${fmtN(wipInFinal)} buc WIP in operatii finale — operatiile initiale si intermediare sunt considerate finalizate`;
+      body.appendChild(banner);
+    }
     body.appendChild(sp('pdm-section-title','Operatii (sortate dupa Operation no ↑ · click pentru detalii)'));
 
     const tbl=el('table','pdm-wc-table');tbl.style.width='100%';
@@ -4942,9 +5006,31 @@ ${bodyHTML}
       const th=el('th');th.textContent=h;hr.appendChild(th);});
     thead.appendChild(hr);tbl.appendChild(thead);
 
+    const TYPE_LABELS={'1 Initial Op':'Operatii Initiale','2 Intermediary Op':'Operatii Intermediare','3 Final Op':'Operatii Finale','3 Final Op ':'Operatii Finale'};
+    let lastType=null;
+
     for(const grp of sortedGroups){
+      // WC Type separator
+      const typeKey=(grp.wcType||'').trim();
+      if(grp.wcType!==lastType){
+        lastType=grp.wcType;
+        const sepTbody=el('tbody');
+        const sepTr=el('tr');
+        const sepTd=el('td');sepTd.colSpan=7;
+        sepTd.style.cssText='background:#f1f5f9;padding:5px 10px;font-size:9.5px;font-weight:800;color:#475569;letter-spacing:.08em;text-transform:uppercase;border-bottom:1px solid var(--border)';
+        const typeLbl=TYPE_LABELS[typeKey]||(typeKey||'Alte operatii');
+        sepTd.textContent=typeLbl;
+        const isPreFinal=typeKey.includes('Initial')||typeKey.includes('Intermediary');
+        if(cascadeFinalized&&isPreFinal){
+          const badge=sp('');badge.style.cssText='margin-left:8px;background:#dcfce7;color:#15803d;border-radius:3px;padding:1px 6px;font-size:9px;font-weight:700';
+          badge.textContent='✓ Acoperit de WIP final';sepTd.appendChild(badge);
+        }
+        sepTr.appendChild(sepTd);sepTbody.appendChild(sepTr);tbl.appendChild(sepTbody);
+      }
+      const isPreFinalOp=typeKey.includes('Initial')||typeKey.includes('Intermediary');
+      const effectiveDone=grp.sumRem<=0.01||(cascadeFinalized&&isPreFinalOp);
       const rawDonePct=grp.sumTotal>0?(1-grp.sumRem/grp.sumTotal)*100:100;
-      const donePctFinal=rawDonePct>=100?100:Math.max(0,Math.round(rawDonePct*100)/100);
+      const donePctFinal=effectiveDone?100:Math.max(0,Math.round(rawDonePct*100)/100);
       const donePctDisplay=donePctFinal===100?'100%':donePctFinal.toFixed(2)+'%';
       const done=donePctFinal>=100;
       const c=done?'#16a34a':donePctFinal>=50?'#ca8a04':donePctFinal>0?'#ea580c':'#dc2626';
